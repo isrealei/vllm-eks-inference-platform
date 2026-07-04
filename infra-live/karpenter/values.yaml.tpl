@@ -1,0 +1,7 @@
+serviceAccount:
+  name: ${service_account_name}
+
+settings:
+  clusterName: ${cluster_name}
+  clusterEndpoint: ${cluster_endpoint}
+  interruptionQueue: ${queue_name}

@@ -1,0 +1,27 @@
+profile              = "your-aws-profile"
+region               = "us-east-1"
+vpc_cidr             = "10.0.0.0/16"
+azs                  = ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1f"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24", "10.0.7.0/24", "10.0.8.0/24"]
+private_subnet_cidrs = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24", "10.0.9.0/24", "10.0.10.0/24"]
+vpc_name             = "barilon"
+environment          = "prod"
+cluster_name         = "barilon"
+project              = "barilon"
+team                 = "devops-team"
+admin_user_arn       = "arn:aws:iam::YOUR_ACCOUNT_ID:user/YOUR_USER"
+eks_version          = "1.35"
+hf_token             = "hf_YOUR_HUGGINGFACE_TOKEN"
+grafana_password     = "YOUR_GRAFANA_PASSWORD"
+
+node_groups = {
+  "default" = {
+    instance_types = ["t3.medium"]
+    capacity_type  = "ON_DEMAND"
+    scaling_config = {
+      desired_size = 2
+      max_size     = 2
+      min_size     = 2
+    }
+  }
+}

@@ -1,0 +1,28 @@
+# Terraform state and cache
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+tfplan
+
+# Secrets — never commit real values
+**/terraform.tfvars
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+outputs/
+
+# Scratch / editor files
+Untitled-*.yaml
+Untitled-*.tf
+
+# Old/duplicate environments
+infra-live2/
+
+# OS
+.DS_Store
+*.swp
