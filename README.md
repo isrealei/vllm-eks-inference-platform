@@ -6,52 +6,9 @@ A fully Terraform-managed platform for serving multiple large language models at
 
 ## Architecture
 
-```
-                                    Internet
-                                       │
-                              vllm.barilon.com
-                                       │
-                              ┌────────▼────────┐
-                              │   AWS NLB        │
-                              │  (Traefik)       │
-                              └────────┬────────┘
-                                       │ HTTPS (TLS via cert-manager + Let's Encrypt)
-                              ┌────────▼────────┐
-                              │    Traefik       │
-                              │ Ingress Controller│
-                              └────────┬────────┘
-                                       │
-                              ┌────────▼────────────────────────────┐
-                              │        LiteLLM Proxy (2 replicas)    │
-                              │          namespace: llm-gateway       │
-                              │                                       │
-                              │  • Unified OpenAI-compatible API      │
-                              │  • Rate limiting per API key          │
-                              │  • Per-token cost tracking            │
-                              │  • Redis response caching             │
-                              │  • Request logging to PostgreSQL      │
-                              │  • Model routing & fallback           │
-                              └──────┬──────────────┬───────────────┘
-                                     │              │
-                   ┌─────────────────▼──┐    ┌──────▼──────────────────┐
-                   │  vLLM — Llama 3.1  │    │  vLLM — Mistral 7B      │
-                   │  8B Instruct        │    │  Instruct v0.3          │
-                   │  namespace: default │    │  namespace: default     │
-                   │  2 replicas         │    │  1 replica              │
-                   │  port :80           │    │  port :8000             │
-                   │  g5/g6 GPU nodes    │    │  g5/g6 GPU nodes        │
-                   │  EFS cache (RWX)    │    │  EFS cache (RWX)        │
-                   └────────────────────┘    └─────────────────────────┘
+[![Architecture Diagram](docs/architecture-preview.png)](https://isrealei.github.io/vllm-eks-inference-platform/architecture.html)
 
-Supporting services (managed node group — t3.medium):
-  Karpenter · GPU Operator · KEDA · Prometheus · Grafana · cert-manager
-  EBS CSI · EFS CSI · AWS Load Balancer Controller
-
-Autoscaling:
-  KEDA → vllm:num_requests_waiting > 5 → scale Llama replicas (2–4)
-  KEDA → vllm:num_requests_waiting > 5 → scale Mistral replicas (1–2)
-  Karpenter → unschedulable GPU pod → provision g5/g6 EC2 in ~90s
-```
+> Click the diagram above to open the **interactive animated version** — shows live request flow from the internet through the NLB → Traefik → LiteLLM gateway → vLLM model backends, with autoscaling annotations.
 
 ---
 
