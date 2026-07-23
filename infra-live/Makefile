@@ -38,7 +38,7 @@ apply-workloads:
 	terraform apply -auto-approve
 
 destroy:
-	terraform destroy -refresh=false
+	terraform destroy
 
 fmt:
 	terraform fmt -recursive

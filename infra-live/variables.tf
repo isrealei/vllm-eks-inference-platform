@@ -56,34 +56,17 @@ variable "cluster_name" {
 
 variable "project" {
   description = "project name"
+  type        = string
 }
 
 variable "team" {
   description = "team name"
+  type        = string
 }
 
 variable "eks_version" {
   description = "The version of EKS to use"
   type        = string
-}
-
-
-variable "eks_vpc_cni_version" {
-  description = "The version of the VPC CNI addon to use"
-  type        = string
-  default     = "v1.21.1-eksbuild.7"
-}
-
-variable "eks_coredns_version" {
-  description = "The version of the CoreDNS addon to use"
-  type        = string
-  default     = "v1.14.2-eksbuild.4"
-}
-
-variable "eks_pod_identity_agent_version" {
-  description = "eks pod identity version"
-  type        = string
-  default     = "v1.3.10-eksbuild.3"
 }
 
 
@@ -104,6 +87,13 @@ variable "node_groups" {
 
 variable "admin_user_arn" {
   description = "admin user arn"
+  type        = string
+}
+
+variable "api_allowed_cidrs" {
+  description = "CIDRs allowed to reach the EKS public API endpoint — restrict to your corporate/VPN ranges in production"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }
 
 
@@ -117,4 +107,35 @@ variable "grafana_password" {
   description = "Grafana admin password"
   type        = string
   sensitive   = true
+}
+
+
+variable "acme_email" {
+  description = "email address for the acme dns challenge"
+  type = string
+}
+
+
+variable "dns_zone_name" {
+  description = "Route53 hosted zone used for cert-manager DNS-01 challenges"
+  type        = string
+}
+
+variable "litellm_master_key" {
+  description = "LiteLLM master API key — used to authenticate requests to the proxy"
+  type        = string
+  sensitive   = true
+}
+
+variable "litellm_pg_password" {
+  description = "PostgreSQL password for the LiteLLM database user"
+  type        = string
+  sensitive   = true
+}
+
+variable "litellm_openai_api_key" {
+  description = "OpenAI API key for external model access (set to 'none' if not used)"
+  type        = string
+  sensitive   = true
+  default     = "none"
 }

@@ -71,12 +71,17 @@ resource "aws_eks_cluster" "cluster" {
   version = var.eks_version
 
   vpc_config {
-    subnet_ids = var.subnet_ids
+    subnet_ids              = var.subnet_ids
+    endpoint_private_access = true
+    endpoint_public_access  = true
+    public_access_cidrs     = var.api_allowed_cidrs
   }
+
+  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 
   depends_on = [aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy]
   lifecycle {
-    prevent_destroy = false
+    prevent_destroy = true
   }
 
   tags = merge(
@@ -120,8 +125,7 @@ resource "aws_eks_addon" "addons" {
   )
 }
 
-# create I am role for node group
-
+# create Iam role for node group
 resource "aws_iam_role" "node_group" {
   name = "${var.cluster_name}-node-group-role"
 
@@ -153,7 +157,6 @@ resource "aws_iam_role_policy_attachment" "node_policy" {
       "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
       "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
       "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
-      "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
     ]
   )
 

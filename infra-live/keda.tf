@@ -33,7 +33,15 @@ resource "kubectl_manifest" "vllm_scaled_object" {
             metricName: vllm_num_requests_waiting
             query: sum(vllm:num_requests_waiting{namespace="default"})
             threshold: "5"
+        - metadata:
+            metricName: vllm_gpu_cache_usage_perc
+            query: avg(vllm:gpu_cache_usage_perc{model_name="llama3"}) * 100
+            serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+            threshold: "80"
+          type: prometheus
+
+        
   YAML
 
-  depends_on = [helm_release.keda, helm_release.prometheus]
+  depends_on = [helm_release.keda, helm_release.prometheus, kubectl_manifest.vllm]
 }

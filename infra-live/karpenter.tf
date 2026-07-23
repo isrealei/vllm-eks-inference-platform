@@ -17,7 +17,8 @@ resource "helm_release" "karpenter" {
 }
 
 resource "kubectl_manifest" "default_nodepool" {
-  yaml_body = file("${path.module}/karpenter/nodepool-default.yaml")
+  yaml_body  = file("${path.module}/karpenter/nodepool-default.yaml")
+  depends_on = [helm_release.karpenter]
 }
 
 resource "kubectl_manifest" "default_nodeclass" {
@@ -25,10 +26,12 @@ resource "kubectl_manifest" "default_nodeclass" {
     CLUSTER_NAME = module.eks.cluster_name
     CLUSTER_ROLE = module.karpenter.node_iam_role_name
   })
+  depends_on = [helm_release.karpenter]
 }
 
 resource "kubectl_manifest" "gpu_nodepool" {
-  yaml_body = file("${path.module}/karpenter/nodepool-gpu.yaml")
+  yaml_body  = file("${path.module}/karpenter/nodepool-gpu.yaml")
+  depends_on = [helm_release.karpenter]
 }
 
 resource "kubectl_manifest" "gpu_nodeclass" {
@@ -36,4 +39,5 @@ resource "kubectl_manifest" "gpu_nodeclass" {
     CLUSTER_NAME = module.eks.cluster_name
     NODE_ROLE    = module.karpenter.node_iam_role_name
   })
+  depends_on = [helm_release.karpenter]
 }

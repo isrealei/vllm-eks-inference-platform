@@ -25,25 +25,6 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "eks_vpc_cni_version" {
-  description = "The version of the VPC CNI addon to use"
-  type        = string
-  default     = "v1.21.1-eksbuild.7"
-}
-
-variable "eks_coredns_version" {
-  description = "The version of the CoreDNS addon to use"
-  type        = string
-  default     = "v1.14.2-eksbuild.4"
-}
-
-variable "eks_pod_identity_agent_version" {
-  description = "eks pod identity version"
-  type        = string
-  default     = "v1.3.10-eksbuild.3"
-}
-
-
 variable "node_groups" {
   description = "Map of node group configurations"
   type = map(object({
@@ -61,4 +42,10 @@ variable "node_groups" {
 
 variable "admin_user_arn" {
   description = "admin user arn"
+}
+
+variable "api_allowed_cidrs" {
+  description = "CIDRs allowed to reach the EKS public API endpoint"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }

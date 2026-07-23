@@ -65,6 +65,7 @@ resource "aws_iam_role_policy_attachment" "efs_csi_driver" {
 resource "aws_eks_addon" "efs_csi_driver" {
   cluster_name                = module.eks.cluster_name
   addon_name                  = "aws-efs-csi-driver"
+  addon_version               = "v2.1.4-eksbuild.1"
   resolve_conflicts_on_update = "OVERWRITE"
 
   depends_on = [module.eks, aws_iam_role_policy_attachment.efs_csi_driver]

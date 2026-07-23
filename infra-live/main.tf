@@ -19,18 +19,17 @@ module "vpc" {
 module "eks" {
   source = "../module/eks"
 
-  cluster_name   = var.cluster_name
-  eks_version    = var.eks_version
-  subnet_ids     = module.vpc.private_subnet_ids
-  project        = var.project
-  team           = var.team
-  environment    = var.environment
-  admin_user_arn = var.admin_user_arn
-  node_groups    = var.node_groups
+  cluster_name      = var.cluster_name
+  eks_version       = var.eks_version
+  subnet_ids        = module.vpc.private_subnet_ids
+  project           = var.project
+  team              = var.team
+  environment       = var.environment
+  admin_user_arn    = var.admin_user_arn
+  node_groups       = var.node_groups
+  api_allowed_cidrs = var.api_allowed_cidrs
 
   depends_on = [module.vpc]
-
-
 
 }
 
@@ -50,7 +49,7 @@ module "karpenter" {
   }
 
   tags = {
-    Environment = "prod"
+    Environment = var.environment
     Terraform   = "true"
   }
 

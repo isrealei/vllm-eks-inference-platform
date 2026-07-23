@@ -24,7 +24,7 @@ resource "kubernetes_secret" "hf_token" {
 }
 
 
-# create a Persistent Volume Claim for vLLM to use as a model cache, backed by EBS gp2 storage class
+# Persistent Volume Claim for Llama model weight cache — backed by EFS (ReadWriteMany)
 resource "kubernetes_persistent_volume_claim" "hf_model_cache" {
   metadata {
     name      = "hf-model-cache"
@@ -88,4 +88,5 @@ resource "kubernetes_service" "vllm_llama3" {
     }
   }
 }
+
 
