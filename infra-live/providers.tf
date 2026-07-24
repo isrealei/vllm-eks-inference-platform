@@ -32,15 +32,9 @@ provider "aws" {
   profile = var.profile
 }
 
-# Root-level data source so providers can resolve the endpoint at init time
-# without depending on module output evaluation order.
-data "aws_eks_cluster" "this" {
-  name = var.cluster_name
-}
-
 locals {
-  cluster_endpoint = data.aws_eks_cluster.this.endpoint
-  cluster_ca       = base64decode(data.aws_eks_cluster.this.certificate_authority[0].data)
+  cluster_endpoint = module.eks.cluster_endpoint
+  cluster_ca       = base64decode(module.eks.cluster_ca_certificate)
   exec_config = {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"

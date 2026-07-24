@@ -75,7 +75,7 @@ resource "kubectl_manifest" "mistral_scaled_object" {
     spec:
       scaleTargetRef:
         name: mistral-7b
-      minReplicaCount: 1
+      minReplicaCount: 2
       maxReplicaCount: 2
       pollingInterval: 30
       cooldownPeriod: 300
@@ -98,91 +98,13 @@ resource "kubectl_manifest" "mistral_scaled_object" {
 }
 
 resource "kubectl_manifest" "mistral_deployment" {
-  yaml_body = yamlencode({
-    apiVersion = "apps/v1"
-    kind       = "Deployment"
-    metadata = {
-      name      = "mistral-7b"
-      namespace = "default"
-      annotations = {
-        "prometheus.io/scrape" = "true"
-        "prometheus.io/port"   = "8000"
-      }
-    }
-    spec = {
-      replicas = 1
-      selector = { matchLabels = { app = "mistral-7b" } }
-      template = {
-        metadata = { labels = { app = "mistral-7b" } }
-        spec = {
-          containers = [{
-            name  = "vllm"
-            image = "vllm/vllm-openai:v0.6.3"
-            args = [
-              "--model", "mistralai/Mistral-7B-Instruct-v0.3",
-              "--tokenizer-mode", "mistral",
-              "--dtype", "auto",
-              "--quantization", "fp8",
-              "--max-model-len", "4096",
-              "--gpu-memory-utilization", "0.85",
-              "--served-model-name", "mistral-7b",
-            ]
-            ports = [{ containerPort = 8000 }]
-            env = [{
-              name = "HUGGING_FACE_HUB_TOKEN"
-              valueFrom = {
-                secretKeyRef = {
-                  name = kubernetes_secret.hf_token.metadata[0].name
-                  key  = "token"
-                }
-              }
-            }]
-            resources = {
-              limits   = { "nvidia.com/gpu" = "1", memory = "24Gi" }
-              requests = { "nvidia.com/gpu" = "1", cpu = "4", memory = "16Gi" }
-            }
-            readinessProbe = {
-              httpGet             = { path = "/health", port = 8000 }
-              initialDelaySeconds = 60
-              periodSeconds       = 10
-              failureThreshold    = 30
-            }
-            livenessProbe = {
-              httpGet             = { path = "/health", port = 8000 }
-              initialDelaySeconds = 120
-              periodSeconds       = 30
-              failureThreshold    = 3
-              timeoutSeconds      = 10
-            }
-            volumeMounts = [
-              { name = "model-cache", mountPath = "/root/.cache/huggingface" },
-              { name = "dshm",        mountPath = "/dev/shm" },
-            ]
-          }]
-          nodeSelector = {
-            "karpenter.sh/nodepool" = "gpu-inference"
-          }
-          tolerations = [{
-            key      = "nvidia.com/gpu"
-            operator = "Exists"
-            effect   = "NoSchedule"
-          }]
-          volumes = [
-            {
-              name = "model-cache"
-              persistentVolumeClaim = {
-                claimName = kubernetes_persistent_volume_claim.hf_model2_cache.metadata[0].name
-              }
-            },
-            {
-              name     = "dshm"
-              emptyDir = { medium = "Memory", sizeLimit = "8Gi" }
-            },
-          ]
-        }
-      }
-    }
-  })
+  yaml_body = file("${path.module}/vllm/mistral-deployment.yaml")
+
+  lifecycle {
+    # Ignore all in-cluster drift (replicas managed by KEDA).
+    # To force re-apply after a YAML change: terraform apply -replace=kubectl_manifest.mistral_deployment
+    ignore_changes = [yaml_body]
+  }
 
   depends_on = [
     kubernetes_secret.hf_token,

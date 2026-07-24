@@ -81,7 +81,7 @@ resource "aws_eks_cluster" "cluster" {
 
   depends_on = [aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy]
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 
   tags = merge(
@@ -189,7 +189,7 @@ resource "aws_eks_node_group" "node_group" {
 
   lifecycle {
     ignore_changes = [
-      scaling_config[0].desired_size, # managed by Karpenter / cluster autoscaler
+      scaling_config[0].desired_size, # managed by Karpenter 
       release_version,                 # update AMI explicitly, not on every apply
     ]
   }

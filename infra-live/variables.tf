@@ -112,7 +112,7 @@ variable "grafana_password" {
 
 variable "acme_email" {
   description = "email address for the acme dns challenge"
-  type = string
+  type        = string
 }
 
 

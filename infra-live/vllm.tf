@@ -2,6 +2,12 @@
 resource "kubectl_manifest" "vllm" {
   yaml_body = file("${path.module}/vllm/deployment.yaml")
 
+  lifecycle {
+    # Ignore all in-cluster drift (replicas managed by KEDA).
+    # To force re-apply after a YAML change: terraform apply -replace=kubectl_manifest.vllm
+    ignore_changes = [yaml_body]
+  }
+
   depends_on = [
     kubectl_manifest.gpu_nodepool,
     kubectl_manifest.gpu_nodeclass,

@@ -32,7 +32,7 @@ spec:
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
-        name: gpu-a10g                  # separate node class (see below)
+        name: gpu-node-class             # separate node class (see below)
       expireAfter: 720h                 # 30 days — aligns with AMI patching cadence
   limits:
     cpu: 32                              # caps at 1 node (g5.2xlarge = 8 vCPU)

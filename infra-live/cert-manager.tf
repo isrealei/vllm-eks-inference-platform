@@ -54,7 +54,7 @@ resource "aws_iam_role_policy" "cert_manager" {
 }
 
 resource "aws_eks_pod_identity_association" "cert_manager" {
-  cluster_name    =  var.cluster_name
+  cluster_name    = var.cluster_name
   namespace       = "cert-manager"
   service_account = "cert-manager"
   role_arn        = aws_iam_role.cert_manager.arn

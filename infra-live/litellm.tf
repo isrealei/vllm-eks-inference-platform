@@ -171,7 +171,7 @@ resource "kubectl_manifest" "postgres_statefulset" {
     spec = {
       replicas    = 1
       serviceName = "postgres"
-      selector = { matchLabels = { app = "postgres" } }
+      selector    = { matchLabels = { app = "postgres" } }
       template = {
         metadata = { labels = { app = "postgres" } }
         spec = {
@@ -181,7 +181,7 @@ resource "kubectl_manifest" "postgres_statefulset" {
             ports = [{ containerPort = 5432 }]
             env = [
               { name = "POSTGRES_USER", value = local.litellm_pg_user },
-              { name = "POSTGRES_DB",   value = local.litellm_pg_db },
+              { name = "POSTGRES_DB", value = local.litellm_pg_db },
               {
                 name = "POSTGRES_PASSWORD"
                 valueFrom = {
@@ -230,7 +230,7 @@ resource "kubectl_manifest" "postgres_pdb" {
       namespace = local.litellm_ns
     }
     spec = {
-      maxUnavailable = 0
+      maxUnavailable = 1
       selector = {
         matchLabels = { app = "postgres" }
       }
@@ -267,10 +267,10 @@ resource "kubectl_manifest" "litellm_deployment" {
         }
         spec = {
           containers = [{
-            name  = "litellm"
-            image = "ghcr.io/berriai/litellm:latest"
-            args  = ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
-            ports = [{ containerPort = 4000, name = "http" }]
+            name    = "litellm"
+            image   = "ghcr.io/berriai/litellm:latest"
+            args    = ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+            ports   = [{ containerPort = 4000, name = "http" }]
             envFrom = [{ secretRef = { name = kubernetes_secret.litellm.metadata[0].name } }]
             resources = {
               limits   = { cpu = "2", memory = "2Gi" }

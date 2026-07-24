@@ -3,12 +3,12 @@
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: default
+  name: cpu-general
 spec:
   template:
     metadata:
       labels:
-        nightly-scan: "true"
+       cpu-general : "true"
     spec:
       requirements:
         - key: kubernetes.io/arch
@@ -29,12 +29,12 @@ spec:
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
-        name: default
+        name: cpu-general-node-class
       expireAfter: 720h # 30 * 24h = 720h
   limits:
     cpu: 1000
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 1m
+    consolidateAfter: 4m
 
 
