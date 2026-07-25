@@ -34,7 +34,6 @@ spec:
             - --distributed-executor-backend
             - "mp"
             - --enable-prefix-caching
-            - --quantization=awq
           lifecycle:
             postStart:
               exec:

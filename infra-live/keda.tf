@@ -22,7 +22,7 @@ resource "kubectl_manifest" "vllm_scaled_object" {
     spec:
       scaleTargetRef:
         name: vllm-llama3
-      minReplicaCount: 2
+      minReplicaCount: 1
       maxReplicaCount: 4
       pollingInterval: 30
       cooldownPeriod: 300

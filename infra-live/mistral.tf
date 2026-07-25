@@ -21,6 +21,23 @@ resource "kubernetes_persistent_volume_claim" "hf_model2_cache" {
   depends_on = [kubernetes_storage_class_v1.efs]
 }
 
+resource "kubernetes_pod_disruption_budget_v1" "mistral" {
+  metadata {
+    name      = "mistral-7b"
+    namespace = "default"
+  }
+
+  spec {
+    max_unavailable = 1
+
+    selector {
+      match_labels = {
+        app = "mistral-7b"
+      }
+    }
+  }
+}
+
 resource "kubectl_manifest" "mistral_service" {
   yaml_body = yamlencode({
     apiVersion = "v1"
@@ -28,6 +45,7 @@ resource "kubectl_manifest" "mistral_service" {
     metadata = {
       name      = "mistral-7b"
       namespace = "default"
+      labels    = { app = "mistral-7b" }
     }
     spec = {
       selector = { app = "mistral-7b" }
@@ -75,7 +93,7 @@ resource "kubectl_manifest" "mistral_scaled_object" {
     spec:
       scaleTargetRef:
         name: mistral-7b
-      minReplicaCount: 2
+      minReplicaCount: 1
       maxReplicaCount: 2
       pollingInterval: 30
       cooldownPeriod: 300

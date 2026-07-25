@@ -1,6 +1,6 @@
 # create kubernetes manifest for vLLM deployment on EKS with Karpenter GPU node pool
 resource "kubectl_manifest" "vllm" {
-  yaml_body = file("${path.module}/vllm/deployment.yaml")
+  yaml_body = file("${path.module}/vllm/llama.yaml")
 
   lifecycle {
     # Ignore all in-cluster drift (replicas managed by KEDA).
