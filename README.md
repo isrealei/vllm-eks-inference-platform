@@ -128,14 +128,20 @@ EFS uses a separate Access Point per model. The first replica downloads and cach
 
 **Why:**
 
-| Model | Precision | VRAM (approx) | Quality impact |
-|---|---|---|---|
-| Llama 3.1 8B | AWQ (4-bit) | ~6 GB | <1% benchmark degradation |
-| Mistral 7B | fp8 (8-bit) | ~8 GB | Negligible at 7B scale |
+| Model | Precision | Weight VRAM | Remaining for KV cache (24 GB GPU) | Quality impact |
+|---|---|---|---|---|
+| Llama 3.1 8B | AWQ (4-bit) | ~6 GB | ~18 GB | <1% benchmark degradation |
+| Mistral 7B | fp8 (8-bit) | ~8 GB | ~16 GB | Negligible at 7B scale |
+| Llama 3.1 8B | bfloat16 (baseline) | ~16 GB | ~8 GB | — |
+| Mistral 7B | bfloat16 (baseline) | ~14 GB | ~10 GB | — |
 
-Running Mistral at fp8 allows it to fit on a g6.2xlarge (24 GB VRAM) alongside its KV cache without memory pressure. Running it at bfloat16 would push it to 14+ GB and leave very little headroom for concurrent requests.
+The key insight is that VRAM not occupied by weights is available for the KV cache. The KV cache is what holds the context tensors for every in-flight request — more cache space means more concurrent requests can be live simultaneously without eviction. Quantization therefore has a compounding effect: it reduces weight size *and* multiplies throughput by freeing the headroom that would otherwise be consumed by a larger model.
 
-For Llama 3.1 8B, AWQ (Activation-aware Weight Quantization) compresses weights more aggressively than fp8 but applies correction factors per channel, preserving accuracy better than naive 4-bit quantization.
+Running Mistral at fp8 allows it to fit on a g6.2xlarge (24 GB VRAM) with ~16 GB left for KV cache. At bfloat16 that drops to ~10 GB, which at `--gpu-memory-utilization 0.85` translates directly to fewer concurrent sequences before the scheduler starts queuing — exactly the metric KEDA watches to trigger a scale-out.
+
+For Llama 3.1 8B, AWQ (Activation-aware Weight Quantization) compresses weights more aggressively than fp8 but applies per-channel correction factors that compensate for the larger quantization error, preserving accuracy better than naive 4-bit quantization. The result is a model that occupies ~6 GB of weights instead of ~16 GB — leaving ~18 GB of the 24 GB GPU free for KV cache and freeing enough headroom to serve roughly 3× more concurrent requests before the queue backs up.
+
+Smaller weights leave more room for KV cache, which is what actually increases throughput. AWQ is the current sweet spot: minimal quality degradation, significant memory savings, and mature vLLM support.
 
 **Tradeoff:** Quantized models have slightly lower quality on long-context reasoning tasks. For instruction following and chat use cases (the primary workload here), the degradation is imperceptible. For scientific or mathematical reasoning at long context, full precision would be preferable.
 
