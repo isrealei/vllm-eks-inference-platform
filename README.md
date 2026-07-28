@@ -130,7 +130,7 @@ EFS uses a separate Access Point per model. The first replica downloads and cach
 
 | Model | Precision | Weight VRAM | Remaining for KV cache (24 GB GPU) | Quality impact |
 |---|---|---|---|---|
-| Llama 3.1 8B | AWQ (4-bit) | ~6 GB | ~18 GB (~35 concurrent at max ctx) | <1% benchmark degradation |
+| Llama 3.1 8B | AWQ (4-bit) | ~6 GB | ~18 GB (~24 concurrent at max ctx) | <1% benchmark degradation |
 | Mistral 7B | fp8 (8-bit) | ~8 GB | ~16 GB (~30 concurrent at max ctx) | Negligible at 7B scale |
 | Llama 3.1 8B | bfloat16 (baseline) | ~16 GB | ~8 GB (~15 concurrent at max ctx) | n/a |
 | Mistral 7B | bfloat16 (baseline) | ~14 GB | ~10 GB (~20 concurrent at max ctx) | n/a |
@@ -168,6 +168,16 @@ Mistral bf16: ~10 GB / 512 MB ≈ 20 concurrent
 ```
 
 These are upper bounds at the full 4096-token context window. At typical chat turn lengths (200–500 tokens), the same KV cache headroom supports 5–10x more simultaneous requests. vLLM's PagedAttention allocates cache in 16-token pages on demand, so short requests don't reserve the full 512 MB — they only consume what their actual sequence length requires.
+
+Actual vLLM startup output from the deployed Llama 3.1 8B AWQ instance confirms the numbers:
+
+```
+INFO model_runner.py]       Loading model weights took 5.3735 GB
+INFO distributed_gpu_executor.py]  # GPU blocks: 6028, # CPU blocks: 2048
+INFO distributed_gpu_executor.py]  Maximum concurrency for 4096 tokens per request: 23.55x
+```
+
+The measured weight size (5.37 GB) matches the ~6 GB estimate. The reported maximum concurrency (23.55x) is lower than the theoretical ~35 because vLLM reserves an additional 1–3 GiB for CUDA graph capture on top of the 0.85 GPU memory utilization budget. The table uses the measured value.
 
 The key insight is that VRAM not occupied by weights is available for the KV cache. The KV cache is what holds the context tensors for every in-flight request; more cache space means more concurrent requests can be live simultaneously without eviction. Quantization therefore has a compounding effect: it reduces weight size *and* multiplies throughput by freeing the headroom that would otherwise be consumed by a larger model.
 
