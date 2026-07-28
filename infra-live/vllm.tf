@@ -1,3 +1,17 @@
+# PriorityClass for GPU inference workloads. Ensures vLLM pods are scheduled
+# before lower-priority jobs during node-level resource contention (e.g. when
+# Karpenter is provisioning and multiple workloads compete for the first GPU slot).
+resource "kubectl_manifest" "gpu_inference_priority_class" {
+  yaml_body = yamlencode({
+    apiVersion    = "scheduling.k8s.io/v1"
+    kind          = "PriorityClass"
+    metadata      = { name = "gpu-inference-critical" }
+    value         = 900000
+    globalDefault = false
+    description   = "High priority for GPU inference workloads."
+  })
+}
+
 # create kubernetes manifest for vLLM deployment on EKS with Karpenter GPU node pool
 resource "kubectl_manifest" "vllm" {
   yaml_body = file("${path.module}/vllm/llama.yaml")

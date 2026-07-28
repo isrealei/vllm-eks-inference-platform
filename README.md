@@ -306,9 +306,9 @@ taints:
 
 ### Inference Backends
 
-**Llama 3.1 8B** — 2 replicas minimum, 1 GPU each, AWQ quantization, served as `llama3`.
+**Llama 3.1 8B** — 1 replica minimum, 4 maximum, 1 GPU each, AWQ quantization, served as `llama3`.
 
-**Mistral 7B Instruct v0.3** — 1 replica minimum, 1 GPU, fp8 quantization, served as `mistral-7b`.
+**Mistral 7B Instruct v0.3** — 1 replica minimum, 4 maximum, 1 GPU each, fp8 quantization, served as `mistral-7b`.
 
 Both deployments include lifecycle hooks:
 - **postStart** — waits for the health endpoint then fires a warmup inference request to pre-compile CUDA kernels before any user traffic arrives

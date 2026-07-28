@@ -344,6 +344,86 @@ resource "kubernetes_pod_disruption_budget_v1" "litellm" {
   depends_on = [kubernetes_namespace_v1.llm_gateway]
 }
 
+# ---------------------------------------------------------------------------
+# Postgres backup — daily pg_dump to a dedicated gp3 PVC, retaining 7 dumps.
+# Uses DATABASE_URL from the litellm-secrets Secret directly.
+# ---------------------------------------------------------------------------
+
+resource "kubectl_manifest" "postgres_backup_pvc" {
+  yaml_body = yamlencode({
+    apiVersion = "v1"
+    kind       = "PersistentVolumeClaim"
+    metadata = {
+      name      = "postgres-backup"
+      namespace = local.litellm_ns
+    }
+    spec = {
+      accessModes      = ["ReadWriteOnce"]
+      storageClassName = "gp3"
+      resources        = { requests = { storage = "10Gi" } }
+    }
+  })
+
+  depends_on = [kubernetes_namespace_v1.llm_gateway]
+}
+
+resource "kubectl_manifest" "postgres_backup_cronjob" {
+  yaml_body = <<-YAML
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: postgres-backup
+      namespace: ${local.litellm_ns}
+    spec:
+      schedule: "0 2 * * *"
+      concurrencyPolicy: Forbid
+      failedJobsHistoryLimit: 3
+      successfulJobsHistoryLimit: 1
+      jobTemplate:
+        spec:
+          template:
+            metadata:
+              labels:
+                app: postgres-backup
+            spec:
+              containers:
+                - name: backup
+                  image: postgres:16
+                  command: ["/bin/sh", "-c"]
+                  args:
+                    - |
+                      set -e
+                      BACKUP_FILE="/backup/litellm-$(date +%Y%m%d-%H%M%S).sql.gz"
+                      pg_dump "$DATABASE_URL" | gzip > "$BACKUP_FILE"
+                      echo "Backup written: $BACKUP_FILE ($(du -sh $BACKUP_FILE | cut -f1))"
+                      ls -t /backup/*.sql.gz | tail -n +8 | xargs -r rm -v
+                  envFrom:
+                    - secretRef:
+                        name: litellm-secrets
+                  resources:
+                    limits:
+                      cpu: "500m"
+                      memory: 512Mi
+                    requests:
+                      cpu: "100m"
+                      memory: 128Mi
+                  volumeMounts:
+                    - name: backup
+                      mountPath: /backup
+              restartPolicy: OnFailure
+              volumes:
+                - name: backup
+                  persistentVolumeClaim:
+                    claimName: postgres-backup
+  YAML
+
+  depends_on = [
+    kubernetes_namespace_v1.llm_gateway,
+    kubectl_manifest.postgres_statefulset,
+    kubectl_manifest.postgres_backup_pvc,
+  ]
+}
+
 resource "kubectl_manifest" "litellm_ingress" {
   yaml_body = yamlencode({
     apiVersion = "networking.k8s.io/v1"

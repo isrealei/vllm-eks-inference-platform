@@ -94,7 +94,7 @@ resource "kubectl_manifest" "mistral_scaled_object" {
       scaleTargetRef:
         name: mistral-7b
       minReplicaCount: 1
-      maxReplicaCount: 2
+      maxReplicaCount: 4
       pollingInterval: 30
       cooldownPeriod: 300
       triggers:

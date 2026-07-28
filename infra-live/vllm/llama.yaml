@@ -8,7 +8,7 @@ metadata:
     prometheus.io/port: "8000"
     prometheus.io/scrape: "true"
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: vllm-llama3
@@ -22,9 +22,11 @@ spec:
           image: vllm/vllm-openai:v0.6.3   # pin a version, don't use latest
           args:
             - --model
-            - meta-llama/Llama-3.1-8B-Instruct
+            - hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4
+            - --quantization
+            - awq
             - --dtype
-            - bfloat16
+            - auto
             - --max-model-len
             - "4096"          # cap context to save VRAM for concurrent requests
             - --gpu-memory-utilization
@@ -58,11 +60,11 @@ spec:
           resources:
             limits:
               nvidia.com/gpu: "1"
-              memory: "24Gi"
+              memory: "16Gi"
             requests:
               nvidia.com/gpu: "1"
               cpu: "4"
-              memory: "16Gi"
+              memory: "12Gi"
           env:
             - name: HUGGING_FACE_HUB_TOKEN
               valueFrom:
@@ -98,6 +100,7 @@ spec:
             medium: Memory
             sizeLimit: 8Gi
 
+      priorityClassName: gpu-inference-critical
       nodeSelector:
         karpenter.sh/nodepool: gpu-inference # ensure it lands on GPU nodes
       tolerations:

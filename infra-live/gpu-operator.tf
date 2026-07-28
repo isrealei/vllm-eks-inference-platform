@@ -24,6 +24,14 @@ resource "helm_release" "gpu_operator" {
       value = "true"
     },
     {
+      name  = "dcgmExporter.serviceMonitor.enabled"
+      value = "true"
+    },
+    {
+      name  = "dcgmExporter.serviceMonitor.additionalLabels.release"
+      value = "prometheus"
+    },
+    {
       name  = "nfd.enabled"
       value = "true"
     }

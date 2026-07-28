@@ -31,7 +31,7 @@ resource "kubectl_manifest" "vllm_scaled_object" {
           metadata:
             serverAddress: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
             metricName: vllm_num_requests_waiting
-            query: sum(vllm:num_requests_waiting{namespace="default"})
+            query: sum(vllm:num_requests_waiting{namespace="default",model_name="llama3"})
             threshold: "5"
         - metadata:
             metricName: vllm_gpu_cache_usage_perc

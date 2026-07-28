@@ -35,9 +35,9 @@ spec:
         name: gpu-node-class             # separate node class (see below)
       expireAfter: 720h                 # 30 days — aligns with AMI patching cadence
   limits:
-    cpu: 32                              # caps at 1 node (g5.2xlarge = 8 vCPU)
-    memory: 128Gi
-    nvidia.com/gpu: 4                  # max 1 GPU total
+    cpu: 64                              # 8 × g5/g6.2xlarge (8 vCPU) — Llama max 4 + Mistral max 4
+    memory: 256Gi                        # 8 × 32 GiB
+    nvidia.com/gpu: 8                    # Llama maxReplicaCount(4) + Mistral maxReplicaCount(4)
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 10m

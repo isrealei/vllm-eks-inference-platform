@@ -90,6 +90,7 @@ spec:
               mountPath: /root/.cache/huggingface
             - name: dshm
               mountPath: /dev/shm
+      priorityClassName: gpu-inference-critical
       nodeSelector:
         karpenter.sh/nodepool: gpu-inference
       tolerations:
