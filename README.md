@@ -1,8 +1,8 @@
 # Production LLM Inference Platform on AWS EKS
 
-A fully Terraform-managed platform for serving open-source large language models at scale on AWS. The platform provisions an Amazon EKS cluster with GPU autoscaling, runs Meta Llama 3.1 8B and Mistral 7B through [vLLM](https://github.com/vllm-project/vllm), and routes all traffic through a [LiteLLM](https://github.com/BerriAI/litellm) proxy gateway — giving any client a single OpenAI-compatible endpoint with rate limiting, cost tracking, and response caching.
+A fully Terraform-managed platform for serving open-source large language models at scale on AWS. The platform provisions an Amazon EKS cluster with GPU autoscaling, runs Meta Llama 3.1 8B and Mistral 7B through [vLLM](https://github.com/vllm-project/vllm), and routes all traffic through a [LiteLLM](https://github.com/BerriAI/litellm) proxy gateway, giving any client a single OpenAI-compatible endpoint with rate limiting, cost tracking, and response caching.
 
-The goal: demonstrate that open-source LLM infrastructure can be production-ready — observable, cost-efficient, and operationally sound — not just a demo cluster.
+The goal: demonstrate that open-source LLM infrastructure can be production-ready: observable, cost-efficient, and operationally sound. Not just a demo cluster.
 
 ---
 
@@ -27,15 +27,15 @@ Client → vllm.barilon.com → AWS NLB → Traefik → LiteLLM Proxy
 | Capability | Implementation |
 |---|---|
 | **LLM serving** | vLLM with OpenAI-compatible API, continuous batching, PagedAttention |
-| **API gateway** | LiteLLM — unified routing, rate limiting, cost tracking, Redis caching |
+| **API gateway** | LiteLLM: unified routing, rate limiting, cost tracking, Redis caching |
 | **Multi-model serving** | Llama 3.1 8B + Mistral 7B behind a single endpoint |
-| **GPU autoscaling** | Karpenter NodePool (g5/g6 families) — provisions in ~90 seconds |
+| **GPU autoscaling** | Karpenter NodePool (g5/g6 families), provisions in ~90 seconds |
 | **Request-driven scaling** | KEDA ScaledObjects keyed on `vllm:num_requests_waiting` per model |
-| **Shared model cache** | Amazon EFS (ReadWriteMany) — weights downloaded once, shared across replicas |
+| **Shared model cache** | Amazon EFS (ReadWriteMany); weights downloaded once, shared across replicas |
 | **Cost tracking** | LiteLLM logs every token to PostgreSQL with per-model pricing |
 | **Graceful pod lifecycle** | postStart CUDA warmup + preStop drain hooks on every GPU pod |
 | **TLS everywhere** | cert-manager + Let's Encrypt DNS-01 via Route53; Traefik terminates |
-| **Pod Identity** | EKS Pod Identity for all CSI drivers — no IMDS or node-level IRSA |
+| **Pod Identity** | EKS Pod Identity for all CSI drivers; no IMDS or node-level IRSA |
 | **Observability** | Prometheus + Grafana + DCGM GPU exporter + per-model ServiceMonitors |
 | **IaC discipline** | Two-phase Terraform apply with Makefile targets; no manual kubectl steps |
 
@@ -49,7 +49,7 @@ This section walks through the non-obvious choices made in this platform and why
 
 **Decision:** Use vLLM rather than Hugging Face TGI, Triton, or running the model directly with `transformers`.
 
-**Why:** vLLM implements [PagedAttention](https://arxiv.org/abs/2309.06180) — it manages the KV cache as pages instead of reserving contiguous VRAM per sequence. This allows 5–10x more concurrent requests on the same GPU compared to naive serving. It also implements continuous batching, which means requests are grouped dynamically rather than waiting for a fixed batch window. The net effect is significantly higher GPU utilisation and lower latency under concurrent load.
+**Why:** vLLM implements [PagedAttention](https://arxiv.org/abs/2309.06180): it manages the KV cache as pages instead of reserving contiguous VRAM per sequence. This allows 5–10x more concurrent requests on the same GPU compared to naive serving. It also implements continuous batching, which means requests are grouped dynamically rather than waiting for a fixed batch window. The net effect is significantly higher GPU utilisation and lower latency under concurrent load.
 
 **Tradeoff:** vLLM is more VRAM-hungry than TGI at idle (it pre-allocates the cache). The `--gpu-memory-utilization 0.85` flag leaves 15% headroom to avoid OOM on burst traffic. TGI has a smaller memory footprint at low concurrency but degrades faster under load.
 
@@ -61,11 +61,11 @@ This section walks through the non-obvious choices made in this platform and why
 
 **Why:** Raw vLLM has no concept of API keys, rate limits, cost attribution, or multi-model routing. Adding a gateway gives the platform:
 
-- **A single endpoint** — clients change the `model` field, never the URL
-- **Authentication** — every request requires a master key or virtual key
-- **Rate limiting** — per-key limits prevent one client from monopolising GPU time
-- **Cost tracking** — every token logged to PostgreSQL with per-model pricing, enabling chargeback
-- **Redis caching** — identical prompts return from cache without hitting the GPU (30–70% GPU saving on templated workloads)
+- **A single endpoint**: clients change the `model` field, never the URL
+- **Authentication**: every request requires a master key or virtual key
+- **Rate limiting**: per-key limits prevent one client from monopolising GPU time
+- **Cost tracking**: every token logged to PostgreSQL with per-model pricing, enabling chargeback
+- **Redis caching**: identical prompts return from cache without hitting the GPU (30–70% GPU saving on templated workloads)
 
 **Tradeoff:** The gateway adds one extra network hop (~1–5ms latency overhead) and two new stateful services to maintain (Redis and PostgreSQL). For latency-critical real-time applications this is measurable. For typical LLM use cases where model inference takes 500ms–30s, the overhead is negligible.
 
@@ -77,14 +77,14 @@ This section walks through the non-obvious choices made in this platform and why
 
 **Decision:** Use Karpenter to provision GPU nodes rather than a managed node group with Cluster Autoscaler.
 
-**Why:** Karpenter provisions individual EC2 instances directly — it does not round-trip through an Auto Scaling Group. This means:
+**Why:** Karpenter provisions individual EC2 instances directly; it does not round-trip through an Auto Scaling Group. This means:
 
 - **~90 second scale-out** vs 3–5 minutes with Cluster Autoscaler (no ASG warm pool required)
-- **Bin-packing** — Karpenter picks the right instance size for the pending pod, not a pre-configured fixed size
-- **Consolidation** — idle GPU nodes are terminated after 10 minutes, cutting cost during off-peak hours
-- **Per-GPU taint** — the `nvidia.com/gpu=NoSchedule` taint ensures only GPU-requesting pods land on expensive nodes
+- **Bin-packing**: Karpenter picks the right instance size for the pending pod, not a pre-configured fixed size
+- **Consolidation**: idle GPU nodes are terminated after 10 minutes, cutting cost during off-peak hours
+- **Per-GPU taint**: the `nvidia.com/gpu=NoSchedule` taint ensures only GPU-requesting pods land on expensive nodes
 
-**Tradeoff:** Karpenter requires more upfront configuration (NodePool + NodeClass) and has more operational surface area than Cluster Autoscaler. It also requires a separate managed node group for system components — Karpenter itself cannot schedule its own controller.
+**Tradeoff:** Karpenter requires more upfront configuration (NodePool + NodeClass) and has more operational surface area than Cluster Autoscaler. It also requires a separate managed node group for system components; Karpenter itself cannot schedule its own controller.
 
 ---
 
@@ -92,11 +92,11 @@ This section walks through the non-obvious choices made in this platform and why
 
 **Decision:** Use KEDA ScaledObjects driven by `vllm:num_requests_waiting` rather than the Horizontal Pod Autoscaler on CPU or memory.
 
-**Why:** GPU inference workloads do not correlate with CPU. A vLLM pod can be fully saturating a GPU (100% compute) while its CPU usage is under 10%. Scaling on CPU would never trigger. The correct signal is the vLLM request queue depth — when more than 5 requests are waiting for a GPU slot, a new replica is needed.
+**Why:** GPU inference workloads do not correlate with CPU. A vLLM pod can be fully saturating a GPU (100% compute) while its CPU usage is under 10%. Scaling on CPU would never trigger. The correct signal is the vLLM request queue depth: when more than 5 requests are waiting for a GPU slot, a new replica is needed.
 
 ```
 vllm:num_requests_waiting > 5  →  scale up
-GPU cache usage > 80%          →  scale up (secondary signal — VRAM pressure)
+GPU cache usage > 80%          →  scale up (secondary signal: VRAM pressure)
 ```
 
 KEDA reads these metrics directly from Prometheus, making the scaling decision data-driven and model-specific. Llama and Mistral scale independently with their own ScaledObjects.
@@ -114,7 +114,7 @@ KEDA reads these metrics directly from Prometheus, making the scaling decision d
 - Cost ~$0.135 per download at $0.045/GB NAT Gateway pricing
 - Block readiness for every new replica during scale-out
 
-EFS uses a separate Access Point per model. The first replica downloads and caches the weights. Every subsequent replica (including new ones added by KEDA) mounts the same EFS path and reads from cache immediately — startup time drops from 15 minutes to ~2 minutes (model load into VRAM only).
+EFS uses a separate Access Point per model. The first replica downloads and caches the weights. Every subsequent replica (including new ones added by KEDA) mounts the same EFS path and reads from cache immediately; startup time drops from 15 minutes to ~2 minutes (model load into VRAM only).
 
 **Tradeoff:** EFS costs ~$0.30/GB/month vs $0.08/GB for EBS gp3. Two 100 GiB volumes add ~$60/month. The break-even is roughly one avoided NAT Gateway download per month. In practice the EFS cost is justified entirely by the operational simplicity of instant cold starts.
 
@@ -122,7 +122,7 @@ EFS uses a separate Access Point per model. The first replica downloads and cach
 
 ---
 
-### 6. Quantization strategy — fp8 for Mistral, AWQ for Llama
+### 6. Quantization strategy: fp8 for Mistral, AWQ for Llama
 
 **Decision:** Run Mistral 7B at fp8 precision and Llama 3.1 8B with AWQ quantization, rather than both at full bfloat16.
 
@@ -130,16 +130,50 @@ EFS uses a separate Access Point per model. The first replica downloads and cach
 
 | Model | Precision | Weight VRAM | Remaining for KV cache (24 GB GPU) | Quality impact |
 |---|---|---|---|---|
-| Llama 3.1 8B | AWQ (4-bit) | ~6 GB | ~18 GB | <1% benchmark degradation |
-| Mistral 7B | fp8 (8-bit) | ~8 GB | ~16 GB | Negligible at 7B scale |
-| Llama 3.1 8B | bfloat16 (baseline) | ~16 GB | ~8 GB | — |
-| Mistral 7B | bfloat16 (baseline) | ~14 GB | ~10 GB | — |
+| Llama 3.1 8B | AWQ (4-bit) | ~6 GB | ~18 GB (~35 concurrent at max ctx) | <1% benchmark degradation |
+| Mistral 7B | fp8 (8-bit) | ~8 GB | ~16 GB (~30 concurrent at max ctx) | Negligible at 7B scale |
+| Llama 3.1 8B | bfloat16 (baseline) | ~16 GB | ~8 GB (~15 concurrent at max ctx) | n/a |
+| Mistral 7B | bfloat16 (baseline) | ~14 GB | ~10 GB (~20 concurrent at max ctx) | n/a |
 
-The key insight is that VRAM not occupied by weights is available for the KV cache. The KV cache is what holds the context tensors for every in-flight request — more cache space means more concurrent requests can be live simultaneously without eviction. Quantization therefore has a compounding effect: it reduces weight size *and* multiplies throughput by freeing the headroom that would otherwise be consumed by a larger model.
+**How the concurrent request estimates are derived:**
 
-Running Mistral at fp8 allows it to fit on a g6.2xlarge (24 GB VRAM) with ~16 GB left for KV cache. At bfloat16 that drops to ~10 GB, which at `--gpu-memory-utilization 0.85` translates directly to fewer concurrent sequences before the scheduler starts queuing — exactly the metric KEDA watches to trigger a scale-out.
+Both Llama 3.1 8B and Mistral 7B use Grouped Query Attention (GQA) with the same key parameters:
 
-For Llama 3.1 8B, AWQ (Activation-aware Weight Quantization) compresses weights more aggressively than fp8 but applies per-channel correction factors that compensate for the larger quantization error, preserving accuracy better than naive 4-bit quantization. The result is a model that occupies ~6 GB of weights instead of ~16 GB — leaving ~18 GB of the 24 GB GPU free for KV cache and freeing enough headroom to serve roughly 3× more concurrent requests before the queue backs up.
+```
+num_kv_heads  = 8
+head_dim      = 128
+num_layers    = 32
+dtype         = float16 (2 bytes)
+max_model_len = 4096 tokens  (set via --max-model-len in both deployments)
+```
+
+KV cache per token (one sequence, all layers):
+```
+2 (K and V) × num_kv_heads × head_dim × num_layers × sizeof(float16)
+= 2 × 8 × 128 × 32 × 2 bytes
+= 131,072 bytes = 128 KB per token
+```
+
+KV cache per sequence at max context:
+```
+128 KB/token × 4096 tokens = 512 MB per in-flight sequence
+```
+
+Concurrent sequences from available KV cache:
+```
+Llama AWQ  : ~18 GB / 512 MB ≈ 35 concurrent
+Mistral fp8: ~16 GB / 512 MB ≈ 30 concurrent
+Llama bf16 :  ~8 GB / 512 MB ≈ 15 concurrent
+Mistral bf16: ~10 GB / 512 MB ≈ 20 concurrent
+```
+
+These are upper bounds at the full 4096-token context window. At typical chat turn lengths (200–500 tokens), the same KV cache headroom supports 5–10x more simultaneous requests. vLLM's PagedAttention allocates cache in 16-token pages on demand, so short requests don't reserve the full 512 MB — they only consume what their actual sequence length requires.
+
+The key insight is that VRAM not occupied by weights is available for the KV cache. The KV cache is what holds the context tensors for every in-flight request; more cache space means more concurrent requests can be live simultaneously without eviction. Quantization therefore has a compounding effect: it reduces weight size *and* multiplies throughput by freeing the headroom that would otherwise be consumed by a larger model.
+
+Running Mistral at fp8 allows it to fit on a g6.2xlarge (24 GB VRAM) with ~16 GB left for KV cache. At bfloat16 that drops to ~10 GB, which at `--gpu-memory-utilization 0.85` translates directly to fewer concurrent sequences before the scheduler starts queuing, which is exactly the metric KEDA watches to trigger a scale-out.
+
+For Llama 3.1 8B, AWQ (Activation-aware Weight Quantization) compresses weights more aggressively than fp8 but applies per-channel correction factors that compensate for the larger quantization error, preserving accuracy better than naive 4-bit quantization. The result is a model that occupies ~6 GB of weights instead of ~16 GB, leaving ~18 GB of the 24 GB GPU free for KV cache and freeing enough headroom to serve roughly 3x more concurrent requests before the queue backs up.
 
 Smaller weights leave more room for KV cache, which is what actually increases throughput. AWQ is the current sweet spot: minimal quality degradation, significant memory savings, and mature vLLM support.
 
@@ -151,7 +185,7 @@ Smaller weights leave more room for KV cache, which is what actually increases t
 
 **Decision:** Split deployment into a cluster phase and a workload phase rather than a single `terraform apply`.
 
-**Why:** The Kubernetes, Helm, and kubectl Terraform providers need a live cluster endpoint to configure themselves. If the cluster doesn't exist yet, any resource that uses these providers fails immediately — even at `terraform plan`. A single apply would require Terraform to know the cluster endpoint before it has created the cluster.
+**Why:** The Kubernetes, Helm, and kubectl Terraform providers need a live cluster endpoint to configure themselves. If the cluster doesn't exist yet, any resource that uses these providers fails immediately, even at `terraform plan`. A single apply would require Terraform to know the cluster endpoint before it has created the cluster.
 
 The solution is two named Makefile targets:
 
@@ -162,7 +196,7 @@ make plan-workloads  →  plans all Kubernetes workloads (requires live cluster)
 make apply-workloads →  deploys everything
 ```
 
-**Tradeoff:** The two-phase pattern adds a manual step between infrastructure and workload deployment. The alternative — separate Terraform workspaces or Terragrunt — would give a cleaner separation but add tooling complexity. For a single-environment deployment, the Makefile approach is simpler and sufficient.
+**Tradeoff:** The two-phase pattern adds a manual step between infrastructure and workload deployment. The alternative (separate Terraform workspaces or Terragrunt) would give a cleaner separation but add tooling complexity. For a single-environment deployment, the Makefile approach is simpler and sufficient.
 
 ---
 
@@ -170,7 +204,7 @@ make apply-workloads →  deploys everything
 
 **Decision:** Use EKS Pod Identity for CSI driver IAM rather than IAM Roles for Service Accounts (IRSA).
 
-**Why:** Pod Identity does not require an OIDC provider to be created and managed on the AWS account. The association between a Kubernetes service account and an IAM role is a single `aws_eks_pod_identity_association` resource. Credentials are injected by the EKS agent — the pod never calls the EC2 instance metadata service (IMDS) to get credentials, which removes a lateral movement vector.
+**Why:** Pod Identity does not require an OIDC provider to be created and managed on the AWS account. The association between a Kubernetes service account and an IAM role is a single `aws_eks_pod_identity_association` resource. Credentials are injected by the EKS agent; the pod never calls the EC2 instance metadata service (IMDS) to get credentials, which removes a lateral movement vector.
 
 **Tradeoff:** Pod Identity requires EKS 1.24+ and the `eks-pod-identity-agent` addon. IRSA works on older clusters and is more portable across cloud providers. Given the cluster is EKS 1.35, Pod Identity is the right choice.
 
@@ -186,7 +220,7 @@ make apply-workloads →  deploys everything
 
 ---
 
-### 10. Lifecycle hooks — postStart warmup and preStop drain
+### 10. Lifecycle hooks: postStart warmup and preStop drain
 
 **Decision:** Add `postStart` and `preStop` hooks to every vLLM pod.
 
@@ -197,7 +231,7 @@ postStart:
     command: ["/bin/sh", "-c", "while ! curl -s http://localhost:8000/health; do sleep 1; done && curl -s http://localhost:8000/v1/chat/completions -d '{...warmup request...}'"]
 ```
 
-CUDA JIT-compiles its kernels on the first forward pass through a model. Without warmup, the first real user request absorbs this compilation cost — adding 5–15 seconds to what should be a fast response. The `postStart` hook runs a dummy inference request before the pod enters the Service endpoints, so CUDA kernels are compiled by the time real traffic arrives.
+CUDA JIT-compiles its kernels on the first forward pass through a model. Without warmup, the first real user request absorbs this compilation cost, adding 5–15 seconds to what should be a fast response. The `postStart` hook runs a dummy inference request before the pod enters the Service endpoints, so CUDA kernels are compiled by the time real traffic arrives.
 
 **preStop (drain):**
 ```yaml
@@ -208,7 +242,7 @@ preStop:
 
 When Kubernetes terminates a pod (scale-down, node drain, rolling update), it removes the pod from Service endpoints first but in-flight requests may still be in mid-generation. The `preStop` hook signals vLLM and waits 60 seconds for in-flight requests to complete before the container receives `SIGTERM`.
 
-**Tradeoff:** The warmup adds 30–60 seconds to pod startup time (on top of the 2 minutes for model loading). For rapid scale-out scenarios, this delay is visible. The alternative — no warmup — means the first user hits a cold CUDA path.
+**Tradeoff:** The warmup adds 30–60 seconds to pod startup time (on top of the 2 minutes for model loading). For rapid scale-out scenarios, this delay is visible. The alternative (no warmup) means the first user hits a cold CUDA path.
 
 ---
 
@@ -232,7 +266,7 @@ When Kubernetes terminates a pod (scale-down, node drain, rolling update), it re
 | GPU Autoscaling | Karpenter | 1.6.0 |
 | LLM Gateway | LiteLLM Proxy | latest |
 | LLM Serving | vLLM | 0.6.3 |
-| Models | Llama 3.1 8B Instruct · Mistral 7B Instruct v0.3 | — |
+| Models | Llama 3.1 8B Instruct · Mistral 7B Instruct v0.3 | n/a |
 | GPU Runtime | NVIDIA GPU Operator | v26.3.1 |
 | Event-driven Scaling | KEDA | 2.16.1 |
 | Ingress | Traefik | 34.5.0 |
@@ -240,8 +274,8 @@ When Kubernetes terminates a pod (scale-down, node drain, rolling update), it re
 | Metrics | kube-prometheus-stack | 70.4.2 |
 | Gateway Database | PostgreSQL 16 | StatefulSet |
 | Gateway Cache | Redis 7 | Deployment |
-| Model Storage | Amazon EFS (encrypted, ReadWriteMany) | — |
-| Block Storage | Amazon EBS gp3 (encrypted) | — |
+| Model Storage | Amazon EFS (encrypted, ReadWriteMany) | n/a |
+| Block Storage | Amazon EBS gp3 (encrypted) | n/a |
 
 ---
 
@@ -268,13 +302,14 @@ barilon/
     ├── gpu-operator.tf               # NVIDIA GPU Operator (driver.enabled=false, AL2023)
     ├── ebs.tf                        # EBS CSI driver, Pod Identity, gp3 StorageClass
     ├── efs.tf                        # EFS filesystem, mount targets, CSI driver, StorageClass
-    ├── vllm.tf                       # Llama 3.1 8B — Service, PVC, PDB, HF Secret
-    ├── mistral.tf                    # Mistral 7B — Service, PVC, ServiceMonitor, ScaledObject
-    ├── litellm.tf                    # LiteLLM gateway — Proxy, Redis, PostgreSQL, Ingress
+    ├── vllm.tf                       # Llama 3.1 8B: Service, PVC, PDB, HF Secret
+    ├── mistral.tf                    # Mistral 7B: Service, PVC, ServiceMonitor, ScaledObject
+    ├── litellm.tf                    # LiteLLM gateway: Proxy, Redis, PostgreSQL, Ingress
     ├── monitoring.tf                 # Prometheus stack, Grafana, vLLM ServiceMonitor
     ├── keda.tf                       # KEDA Helm + Llama ScaledObject
     ├── cert-manager.tf               # cert-manager, ClusterIssuers, Route53 IAM
     ├── ingress.tf                    # AWS Load Balancer Controller + Traefik
+    ├── network-policies.tf           # NetworkPolicies: default-deny + explicit allow rules
     │
     ├── karpenter/
     │   ├── values.yaml.tpl
@@ -294,7 +329,7 @@ barilon/
 
 ### Cluster Foundation
 
-A 2-node managed node group (`t3.medium`) runs all system components — Karpenter, KEDA, GPU Operator, Prometheus, Grafana, Traefik, cert-manager, and the full LiteLLM stack. These nodes are provisioned in Phase 1 and never serve inference traffic.
+A 2-node managed node group (`t3.medium`) runs all system components: Karpenter, KEDA, GPU Operator, Prometheus, Grafana, Traefik, cert-manager, and the full LiteLLM stack. These nodes are provisioned in Phase 1 and never serve inference traffic.
 
 ### GPU Node Provisioning
 
@@ -312,13 +347,13 @@ taints:
 
 ### Inference Backends
 
-**Llama 3.1 8B** — 1 replica minimum, 4 maximum, 1 GPU each, AWQ quantization, served as `llama3`.
+**Llama 3.1 8B**: 1 replica minimum, 4 maximum, 1 GPU each, AWQ quantization, served as `llama3`.
 
-**Mistral 7B Instruct v0.3** — 1 replica minimum, 4 maximum, 1 GPU each, fp8 quantization, served as `mistral-7b`.
+**Mistral 7B Instruct v0.3**: 1 replica minimum, 4 maximum, 1 GPU each, fp8 quantization, served as `mistral-7b`.
 
 Both deployments include lifecycle hooks:
-- **postStart** — waits for the health endpoint then fires a warmup inference request to pre-compile CUDA kernels before any user traffic arrives
-- **preStop** — signals vLLM and waits 60 seconds for in-flight requests to drain before the container is killed
+- **postStart**: waits for the health endpoint then fires a warmup inference request to pre-compile CUDA kernels before any user traffic arrives
+- **preStop**: signals vLLM and waits 60 seconds for in-flight requests to drain before the container is killed
 
 ### Request-Driven Autoscaling
 
@@ -326,8 +361,8 @@ Each model has its own KEDA `ScaledObject` watching two Prometheus metrics:
 
 | Model | Queue trigger | Cache trigger | Min | Max |
 |---|---|---|---|---|
-| Llama 3.1 8B | `num_requests_waiting > 5` | `gpu_cache_usage > 80%` | 2 | 4 |
-| Mistral 7B | `num_requests_waiting > 5` | `gpu_cache_usage > 80%` | 1 | 2 |
+| Llama 3.1 8B | `num_requests_waiting > 5` | `gpu_cache_usage > 80%` | 1 | 4 |
+| Mistral 7B | `num_requests_waiting > 5` | `gpu_cache_usage > 80%` | 1 | 4 |
 
 When KEDA adds a replica, Karpenter sees the pending GPU pod and provisions a new node. The replica is ready (including CUDA warmup) before the next polling interval.
 
@@ -349,7 +384,7 @@ Redis caches responses for 1 hour. PostgreSQL stores a log of every request with
 
 ### TLS and Ingress
 
-Traefik runs as the ingress controller backed by an internet-facing NLB provisioned by the AWS Load Balancer Controller. cert-manager issues Let's Encrypt certificates via Route53 DNS-01 — no port 80 exposure required.
+Traefik runs as the ingress controller backed by an internet-facing NLB provisioned by the AWS Load Balancer Controller. cert-manager issues Let's Encrypt certificates via Route53 DNS-01; no port 80 exposure required.
 
 ```
 vllm.barilon.com    → NLB → Traefik → LiteLLM (llm-gateway ns)
@@ -392,9 +427,9 @@ Key variables:
 | `admin_user_arn` | IAM user/role ARN with cluster-admin access |
 | `api_allowed_cidrs` | CIDRs allowed to reach the EKS API endpoint |
 
-`terraform.tfvars` is gitignored — never commit it.
+`terraform.tfvars` is gitignored; never commit it.
 
-### Phase 1 — Cluster Foundation
+### Phase 1: Cluster Foundation
 
 ```bash
 cd infra-live
@@ -410,7 +445,7 @@ kubectl rollout restart deployment/efs-csi-controller -n kube-system
 kubectl rollout restart deployment/ebs-csi-controller -n kube-system
 ```
 
-### Phase 2 — Workloads
+### Phase 2: Workloads
 
 ```bash
 make plan-workloads  # Review Kubernetes resources
@@ -435,7 +470,7 @@ curl https://vllm.barilon.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "llama3", "messages": [{"role": "user", "content": "Explain Karpenter in one paragraph."}]}'
 
-# Mistral 7B — same endpoint, change model name only
+# Mistral 7B - same endpoint, change model name only
 curl https://vllm.barilon.com/v1/chat/completions \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
@@ -467,7 +502,7 @@ cd infra-live && make destroy
 ```bash
 make plan-cluster    # Plan AWS-only resources (safe before cluster exists)
 make plan-workloads  # Plan all workloads (requires live cluster)
-make plan            # Fast plan — skips refresh, for iteration
+make plan            # Fast plan (skips refresh, for iteration)
 make apply           # Apply a saved plan file
 make destroy         # Tear down everything
 make fmt             # Format all Terraform files
@@ -482,8 +517,8 @@ make validate        # Validate configuration
 
 | Metric | What it tells you |
 |---|---|
-| `vllm:num_requests_waiting` | Queue depth — primary KEDA scale trigger |
-| `vllm:gpu_cache_usage_perc` | KV cache pressure — secondary scale trigger at >80% |
+| `vllm:num_requests_waiting` | Queue depth, primary KEDA scale trigger |
+| `vllm:gpu_cache_usage_perc` | KV cache pressure, secondary scale trigger at >80% |
 | `vllm:num_requests_running` | Active GPU inference slots |
 | `vllm:e2e_request_latency_seconds` | End-to-end latency histogram |
 | `vllm:tokens_per_second` | Inference throughput |
@@ -494,7 +529,7 @@ make validate        # Validate configuration
 |---|---|
 | `DCGM_FI_DEV_GPU_UTIL` | Compute utilisation % |
 | `DCGM_FI_DEV_FB_USED` | VRAM used (bytes) |
-| `DCGM_FI_DEV_GPU_TEMP` | Temperature — useful for detecting thermal throttling |
+| `DCGM_FI_DEV_GPU_TEMP` | Temperature; useful for detecting thermal throttling |
 
 Grafana is available at `grafana.barilon.com`. The LiteLLM built-in dashboard at `/ui` shows per-key spend and request volume.
 
@@ -507,8 +542,8 @@ Grafana is available at `grafana.barilon.com`. The LiteLLM built-in dashboard at
 | Public | 10.0.1–2–3–7–8.0/24 | NLB, NAT Gateway |
 | Private | 10.0.4–5–6–9–10.0/24 | EKS nodes (all workloads) |
 
-- 5 AZs (us-east-1a/b/c/d/f) — us-east-1e excluded (limited GPU capacity)
-- Single NAT Gateway — cost-optimised; add per-AZ for full egress HA
+- 5 AZs (us-east-1a/b/c/d/f); us-east-1e excluded (limited GPU capacity)
+- Single NAT Gateway, cost-optimised; add per-AZ for full egress HA
 - EFS mount targets in every private subnet for AZ-local NFS throughput
 - EFS security group allows TCP 2049 from VPC CIDR only
 
@@ -516,12 +551,13 @@ Grafana is available at `grafana.barilon.com`. The LiteLLM built-in dashboard at
 
 ## Security
 
-- **EKS Pod Identity** for EBS CSI, EFS CSI, cert-manager, and AWS Load Balancer Controller — no node-level IRSA, no IMDS access from pods
-- **Least privilege IAM** — each component carries only the minimum policy required
+- **EKS Pod Identity** for EBS CSI, EFS CSI, cert-manager, and AWS Load Balancer Controller; no node-level IRSA, no IMDS access from pods
+- **Least privilege IAM**: each component carries only the minimum policy required
 - **EFS encrypted at rest**; EBS gp3 volumes with `encrypted=true`
-- **EKS API auth mode** — access entries scoped to the admin IAM user only; no `aws-auth` ConfigMap
-- **AL2023 GPU AMI** — NVIDIA drivers pre-baked; GPU Operator does not reinstall them
-- **LiteLLM master key** — authentication required on every API request; vLLM pods are not exposed directly
+- **NetworkPolicies** in every namespace: default-deny ingress with explicit allow rules; Postgres and Redis accept only from LiteLLM pods, vLLM backends accept only from the `llm-gateway` namespace
+- **EKS API auth mode**: access entries scoped to the admin IAM user only; no `aws-auth` ConfigMap
+- **AL2023 GPU AMI**: NVIDIA drivers pre-baked; GPU Operator does not reinstall them
+- **LiteLLM master key**: authentication required on every API request; vLLM pods are not exposed directly
 
 ---
 
@@ -531,10 +567,9 @@ Grafana is available at `grafana.barilon.com`. The LiteLLM built-in dashboard at
 |---|---|
 | **Single NAT Gateway** | Cross-AZ egress fails if NAT GW's AZ goes down. Add per-AZ NAT Gateways for production SLA. |
 | **Secrets in tfvars** | `hf_token`, `litellm_master_key`, `litellm_pg_password` should move to AWS Secrets Manager for team use. |
-| **No NetworkPolicy** | Pods communicate freely within the cluster. Add Calico or VPC CNI policies to isolate namespaces. |
 | **Single GPU per vLLM pod** | Each pod requests 1 GPU. For 70B+ models, switch to `ray` distributed executor and request multiple GPUs. |
 | **PostgreSQL single replica** | The LiteLLM database has no HA. Replace with Amazon RDS for production durability. |
-| **Plaintext provider config** | Helm provider uses exec-based token — secure in CI with short-lived credentials, but review for long-lived environments. |
+| **Plaintext provider config** | Helm provider uses exec-based token, secure in CI with short-lived credentials, but review for long-lived environments. |
 
 ---
 
@@ -543,14 +578,14 @@ Grafana is available at `grafana.barilon.com`. The LiteLLM built-in dashboard at
 | Resource | Type | Estimated monthly |
 |---|---|---|
 | EKS control plane | Managed | ~$73 |
-| System nodes (2× t3.medium) | On-demand | ~$60 |
-| Llama GPU nodes (2× g5.2xlarge) | On-demand | ~$1,100 |
-| Mistral GPU node (1× g6.2xlarge) | On-demand | ~$400 |
-| EFS (2× 100 GiB volumes) | Standard | ~$60 |
-| EBS — Prometheus (50 GiB gp3) | gp3 | ~$5 |
-| EBS — PostgreSQL (10 GiB gp3) | gp3 | ~$1 |
+| System nodes (2x t3.medium) | On-demand | ~$60 |
+| Llama GPU nodes (2x g5.2xlarge) | On-demand | ~$1,100 |
+| Mistral GPU node (1x g6.2xlarge) | On-demand | ~$400 |
+| EFS (2x 100 GiB volumes) | Standard | ~$60 |
+| EBS (Prometheus, 50 GiB gp3) | gp3 | ~$5 |
+| EBS (PostgreSQL, 10 GiB gp3) | gp3 | ~$1 |
 | NAT Gateway | Fixed + data | ~$35 |
 | Route53 + cert | Hosted zone | ~$1 |
 | **Total (full running)** | | **~$1,735/month** |
 
-Karpenter consolidates idle GPU nodes after 10 minutes. Off-peak cost is just the system node group (~$133/month). Model weights are cached on EFS — the one-time NAT Gateway download cost (~$1.35 per model) is never repeated on restart or scale-out.
+Karpenter consolidates idle GPU nodes after 10 minutes. Off-peak cost is just the system node group (~$133/month). Model weights are cached on EFS; the one-time NAT Gateway download cost (~$1.35 per model) is never repeated on restart or scale-out.
