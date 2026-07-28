@@ -1,8 +1,18 @@
 # Production LLM Inference Platform on AWS EKS
 
+![EKS](https://img.shields.io/badge/EKS-1.35-FF9900?logo=amazon-eks&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-1.15+-623CE4?logo=terraform&logoColor=white)
+![vLLM](https://img.shields.io/badge/vLLM-0.6.3-76B900?logo=nvidia&logoColor=white)
+![Karpenter](https://img.shields.io/badge/Karpenter-1.6.0-326CE5?logo=kubernetes&logoColor=white)
+![KEDA](https://img.shields.io/badge/KEDA-2.16.1-326CE5?logo=kubernetes&logoColor=white)
+![GPU](https://img.shields.io/badge/GPU-A10G%20%7C%20L4-76B900?logo=nvidia&logoColor=white)
+
 A fully Terraform-managed platform for serving open-source large language models at scale on AWS. The platform provisions an Amazon EKS cluster with GPU autoscaling, runs Meta Llama 3.1 8B and Mistral 7B through [vLLM](https://github.com/vllm-project/vllm), and routes all traffic through a [LiteLLM](https://github.com/BerriAI/litellm) proxy gateway, giving any client a single OpenAI-compatible endpoint with rate limiting, cost tracking, and response caching.
 
 The goal: demonstrate that open-source LLM infrastructure can be production-ready: observable, cost-efficient, and operationally sound. Not just a demo cluster.
+
+> [!NOTE]
+> **Live deployment measurements** — Llama AWQ weights loaded at **5.37 GB**, reporting **23.55x** maximum concurrency at 4096-token context. Mistral fp8 loaded at **7.01 GB**, reporting **21.99x** maximum concurrency. Both running on 24 GB A10G GPUs.
 
 ---
 
@@ -131,11 +141,11 @@ EFS uses a separate Access Point per model. The first replica downloads and cach
 | Model | Precision | Weight VRAM | Remaining for KV cache (24 GB GPU) | Quality impact |
 |---|---|---|---|---|
 | Llama 3.1 8B | AWQ (4-bit) | ~6 GB | ~18 GB (~24 concurrent at max ctx) | <1% benchmark degradation |
-| Mistral 7B | fp8 (8-bit) | ~8 GB | ~16 GB (~30 concurrent at max ctx) | Negligible at 7B scale |
+| Mistral 7B | fp8 (8-bit) | ~7 GB | ~17 GB (~22 concurrent at max ctx) | Negligible at 7B scale |
 | Llama 3.1 8B | bfloat16 (baseline) | ~16 GB | ~8 GB (~15 concurrent at max ctx) | n/a |
 | Mistral 7B | bfloat16 (baseline) | ~14 GB | ~10 GB (~20 concurrent at max ctx) | n/a |
 
-**How the concurrent request estimates are derived:**
+**How the concurrent request estimates are derived**
 
 Both Llama 3.1 8B and Mistral 7B use Grouped Query Attention (GQA) with the same key parameters:
 
@@ -169,7 +179,8 @@ Mistral bf16: ~10 GB / 512 MB ≈ 20 concurrent
 
 These are upper bounds at the full 4096-token context window. At typical chat turn lengths (200–500 tokens), the same KV cache headroom supports 5–10x more simultaneous requests. vLLM's PagedAttention allocates cache in 16-token pages on demand, so short requests don't reserve the full 512 MB — they only consume what their actual sequence length requires.
 
-Actual vLLM startup output from the deployed Llama 3.1 8B AWQ instance confirms the numbers:
+> [!NOTE]
+> Actual vLLM startup output from the deployed instances confirms the numbers:
 
 ```
 INFO model_runner.py]       Loading model weights took 5.3735 GB
@@ -179,13 +190,31 @@ INFO distributed_gpu_executor.py]  Maximum concurrency for 4096 tokens per reque
 
 The measured weight size (5.37 GB) matches the ~6 GB estimate. The reported maximum concurrency (23.55x) is lower than the theoretical ~35 because vLLM reserves an additional 1–3 GiB for CUDA graph capture on top of the 0.85 GPU memory utilization budget. The table uses the measured value.
 
+Mistral 7B fp8 startup output:
+
+```
+WARNING marlin_utils_fp8.py] Your GPU does not have native support for FP8 computation
+                              but FP8 quantization is being used. Weight-only FP8 compression
+                              will be used leveraging the Marlin kernel. This may degrade
+                              performance for compute-heavy workloads.
+INFO    model_runner.py]      Loading model weights took 7.0122 GB
+INFO    gpu_executor.py]      # GPU blocks: 5629, # CPU blocks: 2048
+INFO    gpu_executor.py]      Maximum concurrency for 4096 tokens per request: 21.99x
+```
+
+The weight size (7.01 GB) is slightly lower than Llama AWQ (5.37 GB) despite Mistral being a larger parameter count, because fp8 stores weights at 8-bit vs AWQ's 4-bit — the models are different sizes so direct weight comparison is not meaningful. The concurrency (21.99x) is close to Llama's 23.55x, both constrained by the same CUDA graph overhead on the 24 GB GPU.
+
+> [!WARNING]
+> **A10G does not have native FP8 compute.** vLLM falls back to weight-only FP8 compression using the Marlin kernel — weights are stored at fp8 to save VRAM but are dequantized to fp16 before each matrix multiplication. The **memory saving is real** (7 GB vs 14 GB at bfloat16), but you do not get fp8 compute throughput. For hardware-native fp8 execution, H100 or H200 GPUs are required.
+
 The key insight is that VRAM not occupied by weights is available for the KV cache. The KV cache is what holds the context tensors for every in-flight request; more cache space means more concurrent requests can be live simultaneously without eviction. Quantization therefore has a compounding effect: it reduces weight size *and* multiplies throughput by freeing the headroom that would otherwise be consumed by a larger model.
 
 Running Mistral at fp8 allows it to fit on a g6.2xlarge (24 GB VRAM) with ~16 GB left for KV cache. At bfloat16 that drops to ~10 GB, which at `--gpu-memory-utilization 0.85` translates directly to fewer concurrent sequences before the scheduler starts queuing, which is exactly the metric KEDA watches to trigger a scale-out.
 
 For Llama 3.1 8B, AWQ (Activation-aware Weight Quantization) compresses weights more aggressively than fp8 but applies per-channel correction factors that compensate for the larger quantization error, preserving accuracy better than naive 4-bit quantization. The result is a model that occupies ~6 GB of weights instead of ~16 GB, leaving ~18 GB of the 24 GB GPU free for KV cache and freeing enough headroom to serve roughly 3x more concurrent requests before the queue backs up.
 
-Smaller weights leave more room for KV cache, which is what actually increases throughput. AWQ is the current sweet spot: minimal quality degradation, significant memory savings, and mature vLLM support.
+> [!TIP]
+> **Smaller weights leave more room for KV cache, which is what actually increases throughput.** AWQ is the current sweet spot: minimal quality degradation, significant memory savings, and mature vLLM support. Going from bfloat16 to AWQ on a 24 GB GPU takes Llama from ~15 concurrent requests to ~24 — purely from freeing weight memory.
 
 **Tradeoff:** Quantized models have slightly lower quality on long-context reasoning tasks. For instruction following and chat use cases (the primary workload here), the degradation is imperceptible. For scientific or mathematical reasoning at long context, full precision would be preferable.
 
@@ -205,6 +234,9 @@ make apply-cluster   →  provisions the cluster
 make plan-workloads  →  plans all Kubernetes workloads (requires live cluster)
 make apply-workloads →  deploys everything
 ```
+
+> [!TIP]
+> If `terraform plan` fails with `dial tcp 127.0.0.1:80: connection refused`, the cluster does not exist yet. Use `make plan-cluster` which targets only AWS resources and does not require a live Kubernetes API.
 
 **Tradeoff:** The two-phase pattern adds a manual step between infrastructure and workload deployment. The alternative (separate Terraform workspaces or Terragrunt) would give a cleaner separation but add tooling complexity. For a single-environment deployment, the Makefile approach is simpler and sufficient.
 
@@ -437,7 +469,8 @@ Key variables:
 | `admin_user_arn` | IAM user/role ARN with cluster-admin access |
 | `api_allowed_cidrs` | CIDRs allowed to reach the EKS API endpoint |
 
-`terraform.tfvars` is gitignored; never commit it.
+> [!IMPORTANT]
+> `terraform.tfvars` contains secrets (`hf_token`, `litellm_master_key`, `litellm_pg_password`). It is gitignored — never commit it.
 
 ### Phase 1: Cluster Foundation
 
