@@ -101,6 +101,19 @@ spec:
             sizeLimit: 8Gi
 
       priorityClassName: gpu-inference-critical
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: vllm-llama3
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: vllm-llama3
       nodeSelector:
         karpenter.sh/nodepool: gpu-inference # ensure it lands on GPU nodes
       tolerations:
