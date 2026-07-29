@@ -190,74 +190,82 @@ vllm-llama3  1     4     True    True     49m   ← ScalerActive=True
 
 The topology spread constraints I had set ensured these pods landed on different nodes and AZs — no two replicas sharing a host.
 
-### Grafana: Token throughput (1 pod → 4 pods)
+### Grafana: Token throughput — 30-minute sustained run
 
 ```
-Token Throughput (Prompt + Generation tok/s)
-1600 ┤                                          ╭───────────
-1400 ┤                                     ╭───╯
-1200 ┤                                ╭───╯
-1000 ┤                           ╭───╯
- 800 ┤                      ╭───╯
- 600 ┤                 ╭───╯
- 400 ┤            ╭───╯  ← 3rd and 4th pods come online
- 200 ┤       ╭───╯   ← 2nd pod online
-   0 ┼───────╯
-     12:40  12:45  12:50  12:55  13:00  13:05
+Generation Tokens/Sec per pod (13:00–13:30)
+
+2000 ┤         ╭─────────────────────────────────────── pod-6z8c7 (original)
+1500 ┤    ╭────╯╭──────────────────────────────────────  pod-l47vr
+1000 ┤   ╭╯    ╰╮╭────────────────────────────────────  pod-d8mfp
+ 500 ┤  ╭╯      ╰╯╭──────────────────────────────────   pod-65bfd
+ 200 ┤ ╭╯          ╰──────────────────────────────────  pod-65bfd (new, less load)
+   0 ┼─╯
+     13:00  13:05  13:10  13:15  13:20  13:25  13:30
 ```
 
-Combined throughput across 4 pods reached **1,400–1,600 tokens/s**, or roughly **350–400 tok/s per pod** — consistent with the A10G's expected throughput for a 4-bit AWQ model at 256 concurrent sequences.
+The original pod (6z8c7) drove the highest generation throughput, reaching ~**2,000 tok/s** by 13:05 and holding steady. The three newly provisioned pods ramped up at different rates depending on how quickly LiteLLM's `least-busy` router distributed traffic to them. The asymmetry in throughput between pods reflects how the cache utilization was also asymmetric — the original pod held an established, warm KV cache while the new pods started cold.
 
 ### Grafana: GPU KV cache utilization during load
 
 ```
-Cache Utilization (% of KV blocks in use)
- 80% ┤ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ KEDA threshold ─ ─ ─ ─ ─ ─ ─ ─ ─
- 70% ┤                                     ╭─╮  ╭─╮
- 60% ┤                                ╭───╯  ╰──╯  ╰─
- 50% ┤                           ╭───╯
- 40% ┤                      ╭───╯              (oscillating
- 30% ┤                 ╭───╯                    with batch
- 20% ┤            ╭───╯                         scheduling)
- 10% ┤       ╭───╯
-  0% ┼───────╯
-     12:40  12:45  12:50  12:55  13:00  13:05
+GPU KV Cache Utilization per pod (13:00–13:30)
+
+ 80% ┤ ─ ─ ─ ─ ─ ─ ─ KEDA threshold ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+ 75% ┤╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ╭─╮ ← pod-6z8c7
+ 65% ┤╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─╯ ╰─ (sawtooth)
+  5% ┤──────────────────────────────────────────────────── pods l47vr, d8mfp
+  0% ┼──────────────────────────────────────────────────── pod-65bfd (newest)
+     13:00  13:05  13:10  13:15  13:20  13:25  13:30
 ```
 
-The KV cache climbed to 60–70% and oscillated there. It never crossed the 80% KEDA threshold — meaning the queue-depth trigger (>5 waiting requests) was the one that fired first, which is the correct behaviour. The cache pressure trigger is a safety net for long-context workloads.
+This is one of the most revealing charts from the 30-minute run. The original pod (6z8c7) maintained a persistent **60–75% sawtooth oscillation** throughout — this is the signature of vLLM's continuous batching: the scheduler fills the KV cache as it admits new sequences, then blocks are freed when sequences complete, and the cycle repeats. The three newer pods held near **0–5%** for the entire test window. They were receiving traffic from LiteLLM but their KV caches were cold and the load wasn't heavy enough to push them above 5%. This also means the KEDA KV cache trigger (>80%) never fired on any individual pod — the queue-depth trigger was the sole autoscaling signal, which is correct for this workload type.
 
 ### Grafana: Time to First Token under load
 
 ```
-TTFT Latency (seconds)
-  15s ┤                              ╭╮
-12.5s ┤                         ╭───╯ ╰──╮
-  10s ┤                    ╭───╯         ╰──────  ← P99
- 7.5s ┤               ╭───╯                      ─────────  ← P95
-   5s ┤          ╭───╯                           ─────────  ← P90
- 2.5s ┤     ╭───╯                                ─────────  ← P50
-   0s ┼─────╯
-      12:40  12:45  12:50  12:55  13:00  13:05
+Time To First Token Latency (13:00–13:30)
+
+  10s ┤╭──────────────────────────────────────────────────  ← P99 (~9s settled)
+   9s ┤│
+   8s ┤│╭─────────────────────────────────────────────────  ← P95 (~6s)
+   6s ┤╯│
+   5s ┤ ╰─────────────────────────────────────────────────  ← P90 (~4–5s)
+   4s ┤
+   3s ┤──────────────────────────────────────────────────── ← Average (~3s)
+   2s ┤
+   1s ┤ ╭────────────────────────────────────────╮────────  ← P50 (~2s, dropping)
+   0s ┼─╯                                        ╰────────
+      13:00  13:05  13:10  13:15  13:20  13:25  13:30
 ```
 
-TTFT peaked at ~15s (p99) at the moment vLLM was running at full capacity with a waiting queue, then settled to 5–8s once all four pods were serving. The p50 TTFT stayed under 5s throughout.
+The TTFT story across 30 minutes: the initial spike at 13:00 was the ramp-up moment when 300 users hit 1 pod simultaneously. Within 5 minutes, as the other three pods came online, TTFT stabilised:
+
+- **P99 settled at ~8–10s** — the worst 1% of requests waited this long for the first token, consistent with a fully saturated scheduler where long-context requests sit in the prefill queue
+- **P95 at ~5–6s** — a comfortable 95th percentile for a heavy analytical workload
+- **P50 at ~2s** — the median request got its first token in 2 seconds, which for a 300-user sustained load is strong
+- **Average at ~3s** — stable across the full 30-minute window with no degradation
 
 ### Grafana: Scheduler state — 256 running sequences
 
 ```
-Scheduler State (active requests per pod)
-256 ┤                                     ╭──────── Num Running (max batch)
-200 ┤                                ╭───╯
-150 ┤                           ╭───╯
-100 ┤                      ╭───╯
- 50 ┤                 ╭───╯
-  0 ┼─────────────────╯
-    12:40  12:45  12:50  12:55  13:00  13:05
+Scheduler State — Num Running per pod (13:00–13:30)
+
+256 ┤╭────────────────────────────────────────────────────  pod-6z8c7 (primary)
+250 ┤│ (oscillates 248–256 — tight around max_num_seqs)
+ 50 ┤│╭───────────────────────────────────────────────────  pod-l47vr
+ 30 ┤││╭──────────────────────────────────────────────────  pod-d8mfp
+ 20 ┤│││╭─────────────────────────────────────────────────  pod-65bfd
+  0 ┼╯╯╯╯
+     13:00  13:05  13:10  13:15  13:20  13:25  13:30
+
+Num Swapped: ≈ 0 across all pods (no memory eviction pressure)
+Num Waiting: ≈ 0–30, oscillating (queue drains faster than it fills)
 ```
 
-vLLM's continuous batching filled to its `max_num_seqs` limit of **256 running requests** per pod. The `Num Swapped` and `Num Waiting` lines remained near zero once all four pods were active — the fleet had enough capacity to absorb the full 300-user load.
+The primary pod ran at or near `max_num_seqs=256` continuously for the entire 30 minutes — never dropping idle, never swapping sequences to CPU. The three newer pods ran at 20–50 concurrent sequences each, meaning LiteLLM was correctly preferring the already-warmed primary pod (via `least-busy` routing) and distributing overflow to the others.
 
-The `Finish Reason` panel showed **"length"** as the dominant finish cause, peaking at ~600 completions per minute. This confirms most requests hit `max_tokens` and got a full response — the model was not timing out or erroring, it was working.
+**Finish Reason** told the complete story: the `length` counter grew steadily from ~600 completions/min at 13:00 to ~900 completions/min by 13:25 as the fleet reached a stable operating state. Every completion was a full-length response — no timeouts, no OOM errors, no truncations from errors. The model was working at capacity, producing complete answers under full load.
 
 ---
 
@@ -273,22 +281,31 @@ The `Finish Reason` panel showed **"length"** as the dominant finish cause, peak
 | GPU KV cache idle | 0.8% |
 | Prefix cache hit rate | 94.42% |
 
-### Peak load (4 replicas, 300 users, no Redis cache)
+### 30-minute sustained load (4 replicas, 300 users, no Redis cache)
 
-| Metric | Value |
+Measured directly from Grafana at steady state (13:10–13:30):
+
+| Metric | Measured value |
 |---|---|
-| Combined token throughput | 1,400–1,600 tok/s |
-| Per-pod throughput | ~350–400 tok/s |
-| E2E request latency p50 | ~40s |
-| E2E request latency p99 | ~60s |
-| TTFT p50 | ~2–5s |
-| TTFT p99 | ~10–15s |
-| TPOT (inter-token) p50 | ~150–200ms |
-| TPOT (inter-token) p99 | ~350–400ms |
-| GPU KV cache utilization | 60–70% |
-| Concurrent sequences per pod | 256 (at capacity) |
-| KEDA scale event | 1 → 4 pods in ~6 minutes |
-| Karpenter nodes provisioned | 3 additional g5.2xlarge |
+| Primary pod generation throughput | ~2,000 tok/s |
+| Other pods generation throughput | 200–1,500 tok/s each |
+| E2E request latency p50 | ~0s (Redis cache hits visible in p50) |
+| E2E request latency p99 | ~60s (1 min) |
+| TTFT p50 | ~2s |
+| TTFT p95 | ~5–6s |
+| TTFT p99 | ~8–10s (settled after initial ramp) |
+| TPOT p50 | ~120ms |
+| TPOT p90 | ~200ms |
+| TPOT p99 | ~500ms |
+| GPU KV cache — primary pod | 60–75% (sawtooth, continuous batching) |
+| GPU KV cache — other 3 pods | 0–5% (cold, newly provisioned) |
+| Num Running — primary pod | 250–256 (at max_num_seqs, continuous) |
+| Num Running — other pods | 20–50 each |
+| Num Swapped | ~0 (no CPU eviction pressure) |
+| Finish reason "length" | 600 → 900 completions/min over 30 min |
+| KEDA scale event | 1 → 4 pods within ~6 minutes of load onset |
+| Request prompt length | 100–200 tokens (median), up to 932 tokens |
+| Request generation length | 200–500 tokens (median), up to 932 tokens |
 
 ### Cache efficiency
 
