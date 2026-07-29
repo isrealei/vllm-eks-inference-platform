@@ -44,8 +44,8 @@ resource "kubernetes_config_map_v1" "litellm" {
             api_base: http://vllm-llama3.default.svc.cluster.local:80/v1
             api_key: none
           model_info:
-            input_cost_per_token: 0.00000015
-            output_cost_per_token: 0.00000030
+            input_cost_per_token: 0.0015
+            output_cost_per_token: 0.0030
 
         - model_name: mistral-7b
           litellm_params:
@@ -53,8 +53,19 @@ resource "kubernetes_config_map_v1" "litellm" {
             api_base: http://mistral-7b.default.svc.cluster.local:8000/v1
             api_key: none
           model_info:
-            input_cost_per_token: 0.00000015
-            output_cost_per_token: 0.00000030
+            input_cost_per_token: 0.0015
+            output_cost_per_token: 0.0030
+          
+      router_settings:
+        routing_strategy: "least-busy"
+        num_retries: 2
+        retry_after: 5
+        timeout: 120
+        allowed_fails: 3
+        cooldown_time: 60
+        fallbacks:
+          - {"llama3": ["mistral-7b"]}
+          - {"mistral-7b": ["llama3"]}
 
       litellm_settings:
         drop_params: true
@@ -327,6 +338,33 @@ resource "kubectl_manifest" "litellm_service" {
   })
 
   depends_on = [kubernetes_namespace_v1.llm_gateway]
+}
+
+resource "kubectl_manifest" "litellm_service_monitor" {
+  yaml_body = yamlencode({
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "ServiceMonitor"
+    metadata = {
+      name      = "litellm-proxy"
+      namespace = "monitoring"
+      labels    = { release = "prometheus" }
+    }
+    spec = {
+      namespaceSelector = {
+        matchNames = [local.litellm_ns]
+      }
+      selector = {
+        matchLabels = { app = "litellm-proxy" }
+      }
+      endpoints = [{
+        port     = "http"
+        path     = "/metrics"
+        interval = "30s"
+      }]
+    }
+  })
+
+  depends_on = [helm_release.prometheus, kubectl_manifest.litellm_service]
 }
 
 resource "kubernetes_pod_disruption_budget_v1" "litellm" {

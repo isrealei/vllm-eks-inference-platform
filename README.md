@@ -220,6 +220,17 @@ For Llama 3.1 8B, AWQ (Activation-aware Weight Quantization) compresses weights 
 
 ---
 
+benchmarking 
+
+there are two majory types of llm bench mark which are 
+- quality benchmarks 
+- performance bench mark
+
+i will be going with peromance bench mark as that is the realsitic one i can get close to, quality bench mark will require more bodies or product that i dont have acccess to. 
+
+reason for benchmarking is Scaling for production traffic. Before going live, benchmarks under realistic request rates and concurrency levels show how your system holds up.
+
+
 ### 7. Two-phase Terraform apply
 
 **Decision:** Split deployment into a cluster phase and a workload phase rather than a single `terraform apply`.
