@@ -104,7 +104,7 @@ User request
   GPU computes from scratch
 ```
 
-**Key finding:** The two-layer design means most production traffic never touches the GPU. Only the first unique request per prompt variant pays full inference cost.
+**Key finding:** Exact-match gateway caching can eliminate GPU work for repetitive or templated workloads, while prefix caching reduces repeated prefill work for requests sharing stable prompt prefixes. This test used a fixed system prompt across all requests — real conversational traffic with unique user messages, changing history, and tool outputs will see different hit rates on both layers.
 
 ---
 
@@ -135,10 +135,12 @@ Every request cost real money and took 35—46 seconds end-to-end. The TTFT is h
 │ Scenario             │ Cost / request  │ Duration     │ GPU activity │
 ├──────────────────────┼─────────────────┼──────────────┼──────────────┤
 │ LiteLLM Redis hit    │ $0.00           │ ~5ms         │ None         │
-│ vLLM prefix hit only │ $0.00 (approx)  │ ~2–5s        │ Decode only  │
+│ vLLM prefix hit only │ Decode cost only│ ~2–5s        │ Decode only  │
 │ Cold inference       │ $0.928–$0.970   │ 34–46s       │ Full         │
 └──────────────────────┴─────────────────┴──────────────┴──────────────┘
 ```
+
+> **Note:** Only the LiteLLM Redis response-cache hit returns a completed response without contacting the GPU — true $0.00 cost. A vLLM prefix-cache hit still runs decode and produces output tokens; it reduces prefill computation and TTFT for shared prefixes, but the decode work and output-token cost remain.
 
 At 300 concurrent users without caching, spend escalated quickly. LiteLLM's team budget enforcement cut in and issued HTTP 429s once the team crossed $10.00:
 
@@ -312,7 +314,7 @@ Measured directly from Grafana at steady state (13:10–13:30):
 | Scenario | Requests to GPU | Cost per request | Latency |
 |---|---|---|---|
 | Redis cache hit | 0 | $0.00 | ~5ms |
-| vLLM prefix cache hit | Decode only | ~$0.00 | ~2–5s |
+| vLLM prefix cache hit | Decode only | Decode cost only | ~2–5s |
 | Cold inference (no cache) | Full | $0.928–$0.970 | 34–46s |
 
 ---

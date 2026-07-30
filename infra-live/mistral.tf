@@ -1,5 +1,5 @@
-# Separate EFS access point for mistral's model cache — ReadWriteMany so
-# future replicas share downloaded weights without re-downloading
+# EFS-backed PVC for Mistral weight cache — ReadWriteMany lets all replicas share
+# the downloaded model files so scale-out pods skip the multi-GB HuggingFace download.
 resource "kubernetes_persistent_volume_claim" "hf_model2_cache" {
   metadata {
     name      = "hf-model2-cache"
@@ -21,6 +21,8 @@ resource "kubernetes_persistent_volume_claim" "hf_model2_cache" {
   depends_on = [kubernetes_storage_class_v1.efs]
 }
 
+# Allows at most 1 pod to be unavailable during node drain or rolling update,
+# preventing a complete service outage while KEDA scales or Karpenter recycles nodes.
 resource "kubernetes_pod_disruption_budget_v1" "mistral" {
   metadata {
     name      = "mistral-7b"
@@ -38,6 +40,9 @@ resource "kubernetes_pod_disruption_budget_v1" "mistral" {
   }
 }
 
+# ClusterIP service that gives LiteLLM a stable DNS name to reach the inference pods.
+# Port 8000 is vLLM's default HTTP port; the named port "http" is referenced by the
+# ServiceMonitor and the KEDA ScaledObject below.
 resource "kubectl_manifest" "mistral_service" {
   yaml_body = yamlencode({
     apiVersion = "v1"
@@ -54,6 +59,9 @@ resource "kubectl_manifest" "mistral_service" {
   })
 }
 
+# Tells Prometheus to scrape vLLM's /metrics endpoint every 30s.
+# Lives in the monitoring namespace so kube-prometheus-stack discovers it via
+# the release=prometheus label selector on the Prometheus CR.
 resource "kubectl_manifest" "mistral_service_monitor" {
   yaml_body = yamlencode({
     apiVersion = "monitoring.coreos.com/v1"
@@ -83,6 +91,11 @@ resource "kubectl_manifest" "mistral_service_monitor" {
   depends_on = [helm_release.prometheus, kubectl_manifest.mistral_service]
 }
 
+# KEDA ScaledObject that drives Mistral autoscaling based on two Prometheus signals:
+#   1. Queue depth  — scale out when >5 requests are waiting for a GPU slot.
+#   2. KV cache use — scale out when GPU memory blocks are >80% occupied,
+#      indicating the model is under long-context pressure.
+# Replicas are bounded 1–4 matching the GPU NodePool limit in karpenter/nodepool-gpu.yaml.
 resource "kubectl_manifest" "mistral_scaled_object" {
   yaml_body = <<-YAML
     apiVersion: keda.sh/v1alpha1
@@ -115,12 +128,15 @@ resource "kubectl_manifest" "mistral_scaled_object" {
   depends_on = [helm_release.keda, helm_release.prometheus, kubectl_manifest.mistral_deployment]
 }
 
+# Mistral-7B deployment manifest loaded from the vllm/ directory.
+# ignore_changes prevents Terraform from fighting KEDA over the replica count —
+# KEDA owns replicas at runtime; Terraform owns the pod spec.
+# To force a re-apply after editing mistral-deployment.yaml:
+#   terraform apply -replace=kubectl_manifest.mistral_deployment
 resource "kubectl_manifest" "mistral_deployment" {
   yaml_body = file("${path.module}/vllm/mistral-deployment.yaml")
 
   lifecycle {
-    # Ignore all in-cluster drift (replicas managed by KEDA).
-    # To force re-apply after a YAML change: terraform apply -replace=kubectl_manifest.mistral_deployment
     ignore_changes = [yaml_body]
   }
 

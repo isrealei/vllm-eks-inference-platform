@@ -89,26 +89,3 @@ resource "kubectl_manifest" "grafana_ingress" {
     helm_release.prometheus,
   ]
 }
-
-resource "kubectl_manifest" "vllm_service_monitor" {
-  yaml_body = <<-YAML
-    apiVersion: monitoring.coreos.com/v1
-    kind: ServiceMonitor
-    metadata:
-      name: vllm-llama3
-      namespace: monitoring
-      labels:
-        release: prometheus    # must match kube-prometheus-stack release name
-    spec:
-      namespaceSelector:
-        matchNames:
-          - default
-      selector:
-        matchLabels:
-          app: vllm-llama3
-      endpoints:
-        - port: http
-          path: /metrics
-          interval: 30s
-  YAML
-}
