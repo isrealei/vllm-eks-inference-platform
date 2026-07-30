@@ -173,7 +173,7 @@ triggers:
       threshold: "80"      # KV cache pressure trigger
 ```
 
-Both triggers fired. Karpenter provisioned three additional g5.2xlarge nodes. Within ~6 minutes of the load spike, I had four Llama 3 pods running:
+The queue-depth trigger fired. The KV cache trigger (>80%) did not fire during the test — as confirmed by the Grafana data showing the primary pod peaking at 60–75%. Karpenter provisioned three additional g5.2xlarge nodes. Within ~6 minutes of the load spike, I had four Llama 3 pods running:
 
 ```
 kubectl get pods -n default
@@ -289,7 +289,7 @@ Measured directly from Grafana at steady state (13:10–13:30):
 |---|---|
 | Primary pod generation throughput | ~2,000 tok/s |
 | Other pods generation throughput | 200–1,500 tok/s each |
-| E2E request latency p50 | ~0s (Redis cache hits visible in p50) |
+| E2E request latency p50 | ~40–50s |
 | E2E request latency p99 | ~60s (1 min) |
 | TTFT p50 | ~2s |
 | TTFT p95 | ~5–6s |
@@ -326,13 +326,13 @@ Once both the LiteLLM Redis cache and vLLM's prefix cache were warm, the GPU ran
 Under 300 concurrent users the queue-depth trigger (`num_requests_waiting > 5`) fired first, scaling from 1 to 4 pods within 6 minutes. The KV cache trigger (`gpu_cache_usage_perc > 80%`) served as a secondary safety net — GPU cache reached 70% but never crossed 80%, confirming the thresholds are well-calibrated for this workload.
 
 **3. The A10G saturates at 256 concurrent sequences.**
-vLLM's scheduler filled to `max_num_seqs=256` and held there. At that saturation point, throughput was stable at ~350–400 tok/s per pod, TPOT stayed under 400ms (p99), and the model continued delivering full-length responses (finish reason: "length"). The GPU was compute-bound, not memory-bound — KV cache never overflowed.
+vLLM's scheduler filled to `max_num_seqs=256` on the primary pod and held there for the full 30 minutes. At that saturation point, the primary pod sustained ~2,000 generation tok/s, TPOT stayed under 500ms (p99), and the model delivered full-length responses throughout (finish reason: "length" growing 600 → 900 completions/min). The GPU was compute-bound, not memory-bound — KV cache peaked at 75%, well clear of the 80% KEDA threshold.
 
 **4. Budget enforcement is the last line of defence.**
 Without caching, 300 users at $0.95/request crossed the $10.00 team budget in under two minutes, triggering HTTP 429s across the board. LiteLLM's budget gate fired at exactly the right time and blocked further spend. This confirms the budget control mechanism works correctly as a backstop for runaway load tests and misconfigured clients.
 
 **5. Topology spread and multi-replica Llama worked correctly.**
-All four Llama pods landed on distinct nodes (confirmed by pod IP diversity across subnets). The `DoNotSchedule` hostname constraint prevented co-location. During the 4-replica phase, throughput scaled linearly — 4× the pods, 4× the tok/s — indicating no cross-pod coordination overhead from the LiteLLM `least-busy` router.
+All four Llama pods landed on distinct nodes (confirmed by pod IP diversity across subnets). The `DoNotSchedule` hostname constraint prevented co-location. Throughput across the fleet was asymmetric — the original pod handled the bulk of the load at ~2,000 tok/s while the three newly provisioned pods ramped more slowly — because LiteLLM's `least-busy` router correctly favoured the warmer, higher-capacity pod. No coordination overhead was observed between pods.
 
 ---
 
@@ -342,24 +342,27 @@ This is the most important finding from the entire test, so I am pulling it out 
 
 ### What happened with cache disabled
 
-Without prefix caching, every request allocates fresh KV blocks — even if the same system prompt has been seen a thousand times. Under 300 concurrent users, those blocks fill up fast. The GPU KV cache blew past 80% almost immediately, which is the threshold I set in the KEDA ScaledObject. KEDA triggered a scale-out. Karpenter provisioned three new g5.2xlarge nodes. The cluster went from 1 GPU to 4 GPUs to absorb the same load that a single pod was handling comfortably with cache enabled.
+Without prefix caching, every request computes its prompt tokens from scratch — including the system prompt that every single request in this test shares. That computation is not free. Under 300 concurrent users it means the single pod is doing full prefill work on every request rather than skipping 94% of it. The queue fills faster than the scheduler can drain it. Within minutes, `num_requests_waiting` crossed 5 — the queue-depth threshold I set in the KEDA ScaledObject — and KEDA triggered a scale-out. Karpenter provisioned three new g5.2xlarge nodes.
+
+The KV cache trigger (>80%) did not fire — as confirmed by the Grafana 30-minute run where the primary pod peaked at 60–75%. Queue depth was the actual autoscaling signal, which is important: it means the prefix cache's benefit is not about reducing KV cache percentage, it is about reducing compute per request so that one pod can drain the queue faster than it fills.
 
 ```
-KV Cache — with prefix cache disabled, 300 users
- 100% ┤                   ╭─────────────────────────
-  80% ┤ ─ ─ ─ ─ ─ ─ ╭───╯  ← KEDA fires, 3 new pods
-  60% ┤          ╭───╯        provision within 6 min
-  40% ┤     ╭───╯
-  20% ┤╭───╯
-   0% ┼╯
-      T+0    T+2    T+4    T+6    T+8    T+10 min
+num_requests_waiting — without prefix cache, 1 pod, 300 users
 
-KV Cache — with prefix cache enabled, same 300 users
-  80% ┤ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ KEDA threshold
-  10% ┤╭────────────────────────────────────
-   0% ┼╯
-      T+0    T+2    T+4    T+6    T+8    T+10 min
-           (never triggered autoscaling)
+  30 ┤                    ╭──────────────
+  20 ┤               ╭───╯  ← KEDA fires (threshold = 5)
+  10 ┤          ╭───╯    3 new pods provision within ~6 min
+   5 ┤ ─ ─ ─ ╭─╯  ← KEDA threshold
+   0 ┼────────╯
+     T+0    T+1    T+2    T+3    T+4    T+5 min
+
+num_requests_waiting — with prefix cache, 1 pod, same 300 users
+
+   5 ┤ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ KEDA threshold (never crossed)
+   2 ┤╭─╮ ╭─╮ ╭─╮
+   0 ┼╯ ╰─╯ ╰─╯ ╰──────────────────────────────
+     T+0    T+1    T+2    T+3    T+4    T+5 min
+     (queue drains instantly — 1 pod is sufficient)
 ```
 
 ### The GPU node cost calculation
@@ -387,21 +390,23 @@ That $16,920/hour figure is why the team budget of $10.00 was blown through in u
 
 ### Why the prefix cache keeps the pod count low
 
-The 94.42% GPU prefix cache hit rate means that on average, **94.42% of every prompt's tokens do not need KV blocks allocated** — they are read from already-computed cache entries. This dramatically reduces the rate at which the KV cache fills:
+The 94.42% GPU prefix cache hit rate means that on average, **94.42% of every prompt's tokens skip prefill computation entirely** — their KV blocks are read from cache rather than recomputed. This directly reduces the per-request compute cost, which is what keeps the queue from building:
 
 ```
 Without prefix cache:
-  Each 200-token prompt → 200 fresh KV blocks consumed
-  300 users × 200 blocks = 60,000 blocks/round
-  → Cache fills in seconds → KEDA triggers → 4 pods needed
+  Each 200-token prompt → 200 tokens of prefill compute
+  300 users × 200 tokens = 60,000 tokens of prefill work/round
+  → Pod can't drain the queue faster than it arrives
+  → num_requests_waiting > 5 → KEDA triggers → 4 pods
 
 With prefix cache (94.42% hit rate):
-  Each 200-token prompt → ~11 fresh KV blocks consumed (only new tokens)
-  300 users × 11 blocks = 3,300 blocks/round
-  → Cache stays at ~10% → KEDA never fires → 1 pod sufficient
+  Each 200-token prompt → ~11 tokens of prefill compute (only the new tail)
+  300 users × 11 tokens = 3,300 tokens of prefill work/round
+  → Pod drains queue faster than it fills
+  → num_requests_waiting stays near 0 → KEDA never fires → 1 pod sufficient
 ```
 
-One pod, one GPU, one-quarter the infrastructure bill. That is what the prefix cache delivered in this test.
+Note: the KV cache utilisation differs between scenarios — 0.8% when the Redis cache is warm (Scenario 1, where near-zero traffic reaches vLLM) versus 60–75% under full load without Redis (Scenario 3). What the prefix cache changes is not the KV cache fill level, but how much prefill compute each request demands. With prefix caching, that compute collapses to near zero for the shared system prompt. One pod, one GPU, one-quarter the infrastructure bill. That is what the prefix cache delivered in this test.
 
 ---
 
@@ -409,7 +414,7 @@ One pod, one GPU, one-quarter the infrastructure bill. That is what the prefix c
 
 | Observation | Proposed change |
 |---|---|
-| TTFT p99 hit 15s at peak | Reduce `max_num_seqs` from 256 to 128 — tighter queue, lower worst-case TTFT |
+| TTFT p99 settled at 8–10s under 300 users | Reduce `max_num_seqs` from 256 to 128 — tighter queue, lower worst-case TTFT at the cost of some throughput |
 | Budget exhausted in <2min under locust | Set per-key rate limits in addition to team budget |
 | vLLM prefix cache resets on pod restart | Enable `--enable-prefix-caching` with a warm-up script on pod start |
 | `Num Running` flatlines at 256 | Consider chunked prefill (`--enable-chunked-prefill`) to reduce TTFT jitter at high concurrency |
