@@ -9,7 +9,7 @@ from prompt import PROMPTS
 API_KEY = os.getenv("API_KEY", "")
 MODEL = os.getenv(
     "MODEL",
-    "llama3",
+    "llama3"
 )
 
 

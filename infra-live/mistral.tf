@@ -21,7 +21,7 @@ resource "kubernetes_persistent_volume_claim" "hf_model2_cache" {
   depends_on = [kubernetes_storage_class_v1.efs]
 }
 
-# Allows at most 1 pod to be unavailable during node drain or rolling update,
+# Guarantees at least 1 Mistral pod stays running during node drain or rolling update,
 # preventing a complete service outage while KEDA scales or Karpenter recycles nodes.
 resource "kubernetes_pod_disruption_budget_v1" "mistral" {
   metadata {
@@ -30,7 +30,7 @@ resource "kubernetes_pod_disruption_budget_v1" "mistral" {
   }
 
   spec {
-    max_unavailable = 1
+    min_available = 1
 
     selector {
       match_labels = {

@@ -46,6 +46,7 @@ resource "kubernetes_config_map_v1" "litellm" {
           model_info:
             input_cost_per_token: 0.0015
             output_cost_per_token: 0.0030
+            supports_function_calling: false
 
         - model_name: mistral-7b
           litellm_params:
@@ -55,6 +56,7 @@ resource "kubernetes_config_map_v1" "litellm" {
           model_info:
             input_cost_per_token: 0.0015
             output_cost_per_token: 0.0030
+            supports_function_calling: false
           
       router_settings:
         routing_strategy: "least-busy"
@@ -73,7 +75,7 @@ resource "kubernetes_config_map_v1" "litellm" {
         cache: true
         cache_params:
           type: redis
-          host: redis.${local.litellm_ns}.svc.cluster.local
+          host: litellm-redis.${local.litellm_ns}.svc.cluster.local
           ttl: 3600
 
       general_settings:
@@ -136,7 +138,7 @@ resource "kubectl_manifest" "redis_service" {
     apiVersion = "v1"
     kind       = "Service"
     metadata = {
-      name      = "redis"
+      name      = "litellm-redis"
       namespace = local.litellm_ns
     }
     spec = {

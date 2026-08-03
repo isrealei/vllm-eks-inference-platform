@@ -28,7 +28,7 @@ spec:
             - --dtype
             - auto
             - --max-model-len
-            - "4096"          # cap context to save VRAM for concurrent requests
+            - "8192"
             - --gpu-memory-utilization
             - "0.85"          # leave 15% headroom
             - --served-model-name

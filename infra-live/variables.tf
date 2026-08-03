@@ -139,3 +139,9 @@ variable "litellm_openai_api_key" {
   sensitive   = true
   default     = "none"
 }
+
+variable "webui_secret_key" {
+  description = "OpenWebUI session-signing secret — generate once with: openssl rand -hex 32"
+  type        = string
+  sensitive   = true
+}

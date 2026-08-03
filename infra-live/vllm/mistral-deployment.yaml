@@ -29,7 +29,7 @@ spec:
             - --quantization
             - fp8
             - --max-model-len
-            - "4096"
+            - "8192"
             - --gpu-memory-utilization
             - "0.85"
             - --served-model-name

@@ -81,6 +81,16 @@ This section walks through the non-obvious choices made in this platform and why
 
 **Why LiteLLM over Kong or a custom proxy:** LiteLLM speaks the OpenAI API natively and understands LLM-specific concepts like token counting and model routing out of the box. Kong would require custom plugins for all of this.
 
+**Addressing the pushback:**
+
+> *"This adds operational overhead."*
+
+One additional service, yes. What it buys is component isolation: the gateway, each inference backend, and the caching layer can all be updated, scaled, and debugged without touching each other. Adding a second model means adding a new entry in the model list — nothing else changes. The upfront cost is real; the ongoing operational leverage is greater.
+
+> *"Why not just route through the ingress?"*
+
+Ingress controllers operate at the HTTP routing layer. They have no awareness of token counts, model-specific parameters, per-user quotas, or inference-specific protocols. At scale — multiple models, multiple tenants — those concerns surface and you end up building a small application to handle them. A purpose-built LLM gateway is that application, packaged and maintained by people who thought through these problems already.
+
 ---
 
 ### 3. Karpenter over Cluster Autoscaler
