@@ -18,9 +18,14 @@ The goal: demonstrate that open-source LLM infrastructure can be production-read
 
 ## Architecture
 
-[![Architecture Diagram](docs/architecture-preview.png)](https://isrealei.github.io/vllm-eks-inference-platform/architecture.html)
+![vLLM serving architecture on Amazon EKS](docs/architecture/vllm-eks-serving.svg)
 
-> Click the diagram to open the **interactive animated version** showing live request flow through the full stack.
+Public traffic reaches `vllm.barilon.com` through an AWS NLB, terminates TLS at
+Traefik via cert-manager, and is routed by a LiteLLM gateway that fronts two
+vLLM backends on g5/g6 GPU nodes. KEDA scales replicas on queue depth and
+Karpenter provisions GPU capacity for unschedulable pods.
+
+
 
 **Traffic flow:**
 ```
