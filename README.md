@@ -18,7 +18,7 @@ The goal: demonstrate that open-source LLM infrastructure can be production-read
 
 ## Architecture
 
-![vLLM serving architecture on Amazon EKS](docs/architecture/vllm-eks-serving.svg)
+![vLLM serving architecture on Amazon EKS](docs/vllm-eks-serving.gif)
 
 Public traffic reaches `vllm.barilon.com` through an AWS NLB, terminates TLS at
 Traefik via cert-manager, and is routed by a LiteLLM gateway that fronts two
