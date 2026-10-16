@@ -198,7 +198,6 @@ resource "aws_eks_node_group" "node_group" {
 
 }
 
-
 # create access entry to autheicate users
 resource "aws_eks_access_entry" "policy" {
   for_each = local.eks_users
